@@ -15,10 +15,10 @@ const RUNTIME_EXTERNALS = [
   "pino",
   "pino-http",
   "cookie-parser",
-  "drizzle-orm",
-  "pg",
-  "@workspace/api-zod",
-  "@workspace/db",
+  "bcrypt",
+  "jsonwebtoken",
+  "zod",
+  "@prisma/client",
 ];
 
 async function buildAll() {

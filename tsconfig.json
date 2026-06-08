@@ -7,7 +7,8 @@
     "types": ["node"],
     "paths": {
       "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
-      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"]
+      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"],
+      "@workspace/prisma": ["../../lib/prisma/src/index.ts"]
     }
   },
   "include": ["src"]
