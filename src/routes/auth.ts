@@ -7,7 +7,7 @@ import * as authService from "../services/authService";
 
 const router: IRouter = Router();
 
-router.post("/signup", validateBody(signupSchema), async (req, res) => {
+async function handleSignup(req: import("express").Request, res: import("express").Response) {
   try {
     const result = await authService.signup(req.body);
     res.status(201).json({
@@ -19,9 +19,9 @@ router.post("/signup", validateBody(signupSchema), async (req, res) => {
     const { status, body } = toErrorResponse(err);
     res.status(status).json(body);
   }
-});
+}
 
-router.post("/login", validateBody(loginSchema), async (req, res) => {
+async function handleLogin(req: import("express").Request, res: import("express").Response) {
   try {
     const result = await authService.login(req.body);
     res.json({
@@ -33,7 +33,13 @@ router.post("/login", validateBody(loginSchema), async (req, res) => {
     const { status, body } = toErrorResponse(err);
     res.status(status).json(body);
   }
-});
+}
+
+router.post("/signup", validateBody(signupSchema), handleSignup);
+router.post("/sign-up", validateBody(signupSchema), handleSignup);
+
+router.post("/login", validateBody(loginSchema), handleLogin);
+router.post("/sign-in", validateBody(loginSchema), handleLogin);
 
 router.post("/logout", authMiddleware, (_req, res) => {
   res.json({ message: "Logged out successfully" });

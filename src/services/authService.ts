@@ -29,6 +29,7 @@ function toPublicUser(user: {
   };
 }
 
+/** Sign Up: email unique check → bcrypt hash → save to users.password_hash */
 export async function signup(input: SignupInput): Promise<{ user: PublicUser; token: string }> {
   const email = sanitizeEmail(input.email);
   const username = sanitizeUsername(input.username);
@@ -55,6 +56,7 @@ export async function signup(input: SignupInput): Promise<{ user: PublicUser; to
   return { user: toPublicUser(user), token };
 }
 
+/** Sign In: find by email → bcrypt.compare → return user + JWT */
 export async function login(input: LoginInput): Promise<{ user: PublicUser; token: string }> {
   const email = sanitizeEmail(input.email);
 
