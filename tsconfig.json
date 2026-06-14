@@ -8,7 +8,9 @@
     "paths": {
       "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
       "@workspace/api-zod/*": ["../../lib/api-zod/src/*"],
-      "@workspace/prisma": ["../../lib/prisma/src/index.ts"]
+      "@workspace/prisma": ["../../lib/prisma/src/index.ts"],
+      "@workspace/market-data": ["../../lib/market-data/src/index.ts"],
+      "@workspace/i18n": ["../../lib/i18n/src/index.ts"]
     }
   },
   "include": ["src"]

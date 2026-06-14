@@ -19,6 +19,7 @@ const RUNTIME_EXTERNALS = [
   "jsonwebtoken",
   "zod",
   "@prisma/client",
+  "ioredis",
 ];
 
 async function buildAll() {

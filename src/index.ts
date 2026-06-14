@@ -8,14 +8,10 @@ config({ path: path.join(repoRoot, "lib/prisma/.env") });
 
 import app from "./app";
 import { logger } from "./lib/logger";
+import { prewarmKlineCache } from "./services/klineBatchService.js";
 
-const rawPort = process.env["PORT"];
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
+/** API always listens on API_PORT (default 8080). Do not inherit frontend PORT (e.g. 23508). */
+const rawPort = process.env.API_PORT ?? "8080";
 
 const port = Number(rawPort);
 
@@ -30,4 +26,5 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  prewarmKlineCache();
 });
