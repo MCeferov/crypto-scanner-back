@@ -52,6 +52,11 @@ export const messages: MessageTree = {
     change24h: '24ч',
     marketCap: 'Cap',
     volume: 'Объём',
+    volumeSub: 'RSI',
+    volumeReal: 'Реал',
+    volumeFake: 'Фейк',
+    volumeNeutral: 'Нейтр',
+    volumeNoData: 'N/A',
     trend: 'Тренд',
     noIndicator: '—',
     na: '—',
@@ -157,5 +162,10 @@ export const messages: MessageTree = {
   },
   common: {
     loading: 'Загрузка…',
+  },
+  notFound: {
+    title: '404 — Страница не найдена',
+    message: 'Запрашиваемая страница не существует или была перемещена.',
+    back: 'Назад к рынкам',
   },
 };

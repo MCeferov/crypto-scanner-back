@@ -4,7 +4,8 @@ import { fetchYahooKlines, type KlineAssetType } from "./yahooKlineService.js";
 export type { KlineAssetType };
 
 const BINANCE_BASE = process.env.BINANCE_API_BASE ?? "https://api.binance.com/api/v3";
-const KLINE_LIMIT = 70;
+/** Cədvəl və qrafik eyni RSI/indikator üçün eyni mum sayı */
+export const KLINE_LIMIT = 200;
 const CACHE_TTL_MS = 90_000;
 /** Bütün (symbol×interval) sorğuları üçün vahid pool — 16×3=48 əvəzinə 24 */
 const MAX_CONCURRENT = 24;
@@ -16,6 +17,7 @@ export interface Kline {
   low: number;
   close: number;
   volume: number;
+  takerBuyVolume?: number;
   closeTime: number;
 }
 
@@ -42,6 +44,21 @@ function cacheKey(assetId: string, interval: string): string {
   return `${assetId}:${interval}`;
 }
 
+export function normalizeKlineAsset(type: KlineAssetType, symbol: string): KlineAsset {
+  const sym = symbol.toUpperCase();
+  if (type === "crypto") {
+    const trading = sym.endsWith("USDT") ? sym : `${sym}USDT`;
+    const base = trading.replace(/USDT$/, "");
+    return { id: `crypto:${base}`, symbol: trading, type: "crypto" };
+  }
+  return { id: `${type}:${sym}`, symbol: sym, type };
+}
+
+interface FetchKlineOpts {
+  bypassCache?: boolean;
+  limit?: number;
+}
+
 function parseRaw(raw: number[][]): Kline[] {
   return raw.map((k) => ({
     openTime: k[0],
@@ -50,17 +67,25 @@ function parseRaw(raw: number[][]): Kline[] {
     low: parseFloat(String(k[3])),
     close: parseFloat(String(k[4])),
     volume: parseFloat(String(k[5])),
+    takerBuyVolume: k[9] != null ? parseFloat(String(k[9])) : undefined,
     closeTime: k[6],
   }));
 }
 
-async function fetchBinanceKline(symbol: string, interval: string): Promise<Kline[]> {
+async function fetchBinanceKline(
+  symbol: string,
+  interval: string,
+  opts: FetchKlineOpts = {},
+): Promise<Kline[]> {
+  const limit = opts.limit ?? KLINE_LIMIT;
   const base = symbol.replace(/USDT$/, "");
   const key = cacheKey(`crypto:${base}`, interval);
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  if (!opts.bypassCache) {
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  }
 
-  const url = `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${KLINE_LIMIT}`;
+  const url = `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -72,14 +97,21 @@ async function fetchBinanceKline(symbol: string, interval: string): Promise<Klin
   return data;
 }
 
-async function fetchAssetKline(asset: KlineAsset, interval: string): Promise<Kline[]> {
+async function fetchAssetKline(
+  asset: KlineAsset,
+  interval: string,
+  opts: FetchKlineOpts = {},
+): Promise<Kline[]> {
+  const limit = opts.limit ?? KLINE_LIMIT;
   const key = cacheKey(asset.id, interval);
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  if (!opts.bypassCache) {
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+  }
 
   const data = asset.type === "crypto"
-    ? await fetchBinanceKline(asset.symbol, interval)
-    : await fetchYahooKlines(asset.type, asset.symbol, interval, KLINE_LIMIT);
+    ? await fetchBinanceKline(asset.symbol, interval, { bypassCache: true, limit })
+    : await fetchYahooKlines(asset.type, asset.symbol, interval, limit);
 
   cache.set(key, { at: Date.now(), data });
   return data;
@@ -114,6 +146,7 @@ export async function batchFetchKlinesForAssets(
     done: number,
     total: number,
   ) => void,
+  opts: FetchKlineOpts = {},
 ): Promise<Record<string, Record<string, Kline[]>>> {
   const result: Record<string, Record<string, Kline[]>> = {};
   const intervalCount = intervals.length;
@@ -137,7 +170,7 @@ export async function batchFetchKlinesForAssets(
 
   await runPool(tasks, MAX_CONCURRENT, async ({ asset, interval }) => {
     try {
-      result[asset.id][interval] = await fetchAssetKline(asset, interval);
+      result[asset.id][interval] = await fetchAssetKline(asset, interval, opts);
     } catch {
       result[asset.id][interval] = [];
     }
@@ -164,18 +197,10 @@ export async function fetchSingleAssetKlines(
   type: KlineAssetType,
   symbol: string,
   interval: string,
-  limit = 200,
+  limit = KLINE_LIMIT,
 ): Promise<Kline[]> {
-  const id = `${type}:${symbol}`;
-  const asset: KlineAsset = { id, symbol, type };
-  if (type === "crypto") {
-    const url = `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Klines ${symbol}/${interval}: ${res.status}`);
-    const raw = (await res.json()) as number[][];
-    return parseRaw(raw);
-  }
-  return fetchYahooKlines(type, symbol, interval, limit);
+  const asset = normalizeKlineAsset(type, symbol);
+  return fetchAssetKline(asset, interval, { bypassCache: true, limit });
 }
 
 export async function batchFetchKlines(

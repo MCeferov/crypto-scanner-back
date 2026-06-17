@@ -84,7 +84,8 @@ router.post("/klines/batch", async (req: Request, res: Response) => {
     const intervals: string[] = req.body?.intervals ?? ["15m", "1h", "4h"];
 
     if (assets.length > 0) {
-      const data = await batchFetchKlinesForAssets(assets, intervals);
+      const refresh = req.body?.refresh === true;
+      const data = await batchFetchKlinesForAssets(assets, intervals, undefined, { bypassCache: refresh });
       res.json({ data, count: Object.keys(data).length });
       return;
     }
@@ -128,6 +129,8 @@ router.get("/klines/stream", async (req: Request, res: Response) => {
     return;
   }
 
+  const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -136,7 +139,7 @@ router.get("/klines/stream", async (req: Request, res: Response) => {
   try {
     await batchFetchKlinesForAssets(assets.slice(0, 80), tfs, (id, klines, done, total) => {
       res.write(`data: ${JSON.stringify({ id, klines, done, total })}\n\n`);
-    });
+    }, { bypassCache: refresh });
     res.write(`data: ${JSON.stringify({ complete: true })}\n\n`);
   } catch (err) {
     res.write(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : "stream failed" })}\n\n`);

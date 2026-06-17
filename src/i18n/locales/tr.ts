@@ -52,6 +52,11 @@ export const messages: MessageTree = {
     change24h: '24s',
     marketCap: 'Cap',
     volume: 'Hacim',
+    volumeSub: 'RSI',
+    volumeReal: 'Gerçek',
+    volumeFake: 'Sahte',
+    volumeNeutral: 'Nötr',
+    volumeNoData: 'N/A',
     trend: 'Trend',
     noIndicator: '—',
     na: '—',
@@ -157,5 +162,10 @@ export const messages: MessageTree = {
   },
   common: {
     loading: 'Yükleniyor…',
+  },
+  notFound: {
+    title: '404 — Sayfa bulunamadı',
+    message: 'Aradığınız sayfa mevcut değil veya taşınmış olabilir.',
+    back: 'Piyasalara dön',
   },
 };

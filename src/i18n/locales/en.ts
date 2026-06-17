@@ -53,6 +53,11 @@ export const messages: MessageTree = {
     change24h: '24h',
     marketCap: 'Cap',
     volume: 'Vol',
+    volumeSub: 'RSI',
+    volumeReal: 'Real',
+    volumeFake: 'Fake',
+    volumeNeutral: 'Neutral',
+    volumeNoData: 'N/A',
     trend: 'Trend',
     noIndicator: '—',
     na: '—',
@@ -158,5 +163,10 @@ export const messages: MessageTree = {
   },
   common: {
     loading: 'Loading…',
+  },
+  notFound: {
+    title: '404 — Page not found',
+    message: 'The page you are looking for does not exist or has been moved.',
+    back: 'Back to markets',
   },
 };
