@@ -4,8 +4,8 @@ import { fetchYahooKlines, type KlineAssetType } from "./yahooKlineService.js";
 export type { KlineAssetType };
 
 const BINANCE_BASE = process.env.BINANCE_API_BASE ?? "https://api.binance.com/api/v3";
-/** Cədvəl və qrafik eyni RSI/indikator üçün eyni mum sayı */
-export const KLINE_LIMIT = 200;
+/** Cədvəl/indikator — MACD EMA sabitliyi üçün kifayət qədər tarixçə (detail ilə uyğun) */
+export const KLINE_LIMIT = 1000;
 const CACHE_TTL_MS = 90_000;
 /** Bütün (symbol×interval) sorğuları üçün vahid pool — 16×3=48 əvəzinə 24 */
 const MAX_CONCURRENT = 24;
@@ -80,21 +80,50 @@ async function fetchBinanceKline(
   const limit = opts.limit ?? KLINE_LIMIT;
   const base = symbol.replace(/USDT$/, "");
   const key = cacheKey(`crypto:${base}`, interval);
-  if (!opts.bypassCache) {
+  if (!opts.bypassCache && limit <= KLINE_LIMIT) {
     const hit = cache.get(key);
     if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
   }
 
-  const url = `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Klines ${symbol}/${interval}: ${res.status} ${body.slice(0, 80)}`);
+  const maxPerReq = 1000;
+  let all: Kline[] = [];
+  let endTime: number | undefined;
+
+  while (all.length < limit) {
+    const batchSize = Math.min(maxPerReq, limit - all.length);
+    let url =
+      `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${batchSize}`;
+    if (endTime != null) url += `&endTime=${endTime}`;
+
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Klines ${symbol}/${interval}: ${res.status} ${body.slice(0, 80)}`);
+    }
+    const raw = (await res.json()) as number[][];
+    const batch = parseRaw(raw);
+    if (batch.length === 0) break;
+
+    all = batch.concat(all);
+    endTime = batch[0].openTime - 1;
+    if (batch.length < batchSize) break;
   }
-  const raw = (await res.json()) as number[][];
-  const data = parseRaw(raw);
-  cache.set(key, { at: Date.now(), data });
-  return data;
+
+  // Deduplicate by openTime (overlap between pages)
+  const seen = new Set<number>();
+  const data: Kline[] = [];
+  for (const k of all) {
+    if (seen.has(k.openTime)) continue;
+    seen.add(k.openTime);
+    data.push(k);
+  }
+  data.sort((a, b) => a.openTime - b.openTime);
+  const trimmed = data.length > limit ? data.slice(-limit) : data;
+
+  if (limit <= KLINE_LIMIT) {
+    cache.set(key, { at: Date.now(), data: trimmed });
+  }
+  return trimmed;
 }
 
 async function fetchAssetKline(

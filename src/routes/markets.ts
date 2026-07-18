@@ -60,7 +60,7 @@ router.get("/klines/chart", async (req: Request, res: Response) => {
     const type = String(req.query.type ?? "crypto").toLowerCase() as KlineAssetType;
     let symbol = String(req.query.symbol ?? "").toUpperCase();
     const interval = String(req.query.interval ?? "1h");
-    const limit = Math.min(500, Math.max(20, Number(req.query.limit) || 200));
+    const limit = Math.min(5000, Math.max(20, Number(req.query.limit) || 1000));
 
     if (!symbol || !VALID_TYPES.has(type)) {
       res.status(400).json({ error: "type and symbol required" });
