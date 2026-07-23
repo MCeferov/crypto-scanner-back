@@ -27,14 +27,18 @@ app.use(
   }),
 );
 const corsOrigin = process.env.CORS_ORIGIN;
+const isProd = process.env.NODE_ENV === "production";
+if (isProd && !corsOrigin) {
+  throw new Error("CORS_ORIGIN must be set in production");
+}
 app.use(
   cors({
     origin: corsOrigin ? corsOrigin.split(",").map((o) => o.trim()) : true,
     credentials: true,
   }),
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "256kb" }));
+app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
 app.use("/api", router);
 

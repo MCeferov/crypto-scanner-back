@@ -1,11 +1,14 @@
 import { Router, type IRouter } from "express";
 import { authMiddleware } from "../middleware/auth";
 import { validateBody } from "../middleware/validate";
+import { rateLimit } from "../middleware/rateLimit";
 import { toErrorResponse } from "../lib/errors";
 import { loginSchema, signupSchema } from "../validators/auth";
 import * as authService from "../services/authService";
 
 const router: IRouter = Router();
+
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: "auth" });
 
 async function handleSignup(req: import("express").Request, res: import("express").Response) {
   try {
@@ -35,11 +38,11 @@ async function handleLogin(req: import("express").Request, res: import("express"
   }
 }
 
-router.post("/signup", validateBody(signupSchema), handleSignup);
-router.post("/sign-up", validateBody(signupSchema), handleSignup);
+router.post("/signup", authLimiter, validateBody(signupSchema), handleSignup);
+router.post("/sign-up", authLimiter, validateBody(signupSchema), handleSignup);
 
-router.post("/login", validateBody(loginSchema), handleLogin);
-router.post("/sign-in", validateBody(loginSchema), handleLogin);
+router.post("/login", authLimiter, validateBody(loginSchema), handleLogin);
+router.post("/sign-in", authLimiter, validateBody(loginSchema), handleLogin);
 
 router.post("/logout", authMiddleware, (_req, res) => {
   res.json({ message: "Logged out successfully" });

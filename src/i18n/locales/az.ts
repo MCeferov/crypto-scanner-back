@@ -52,7 +52,7 @@ export const messages: MessageTree = {
     change24h: '24s',
     marketCap: 'Cap',
     volume: 'Həcm',
-    volumeSub: 'Real/Fake',
+    volumeSub: 'Alış %',
     volumeReal: 'Real',
     volumeFake: 'Saxta',
     volumeNeutral: 'Neytral',
