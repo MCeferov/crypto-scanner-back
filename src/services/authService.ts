@@ -5,6 +5,9 @@ import { signToken } from "../lib/jwt";
 import { sanitizeEmail, sanitizeUsername } from "../lib/sanitize";
 import type { LoginInput, SignupInput } from "../validators/auth";
 
+// Valid bcrypt hash of a random string — used only to equalize login timing.
+const DUMMY_HASH = "$2b$12$CActsalRlkSGM5KE.xhVK.kyvF8YK.aGioYj1/haYHsUNi1qGn/3K";
+
 export interface PublicUser {
   id: string;
   username: string;
@@ -47,9 +50,19 @@ export async function signup(input: SignupInput): Promise<{ user: PublicUser; to
 
   const passwordHash = await hashPassword(input.password);
 
-  const user = await prisma.user.create({
-    data: { email, username, passwordHash },
-  });
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: { email, username, passwordHash },
+    });
+  } catch (err) {
+    // Concurrent duplicate signup: the findFirst check above is not atomic,
+    // so the unique constraint can still fire (Prisma P2002).
+    if (typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002") {
+      throw new AppError(409, "Email or username is already registered", "ALREADY_EXISTS");
+    }
+    throw err;
+  }
 
   const token = signToken({ userId: user.id, email: user.email, username: user.username });
 
@@ -62,6 +75,9 @@ export async function login(input: LoginInput): Promise<{ user: PublicUser; toke
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
+    // Burn the same bcrypt cost as a real check so response timing
+    // doesn't reveal whether the email is registered.
+    await verifyPassword(input.password, DUMMY_HASH);
     throw new AppError(401, "Invalid email or password", "INVALID_CREDENTIALS");
   }
 

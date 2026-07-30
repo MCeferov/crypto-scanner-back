@@ -46,6 +46,10 @@ export const messages: MessageTree = {
     crypto_etf: 'Kripto ETF',
   },
   table: {
+    watchlist: 'Favoriler',
+    columns: 'Sütunlar',
+    compact: 'Sıkışık satırlar',
+    comfortable: 'Rahat satırlar',
     rank: '#',
     asset: 'Varlık',
     price: 'Fiyat',
@@ -221,6 +225,8 @@ export const messages: MessageTree = {
     heatmapTitle: 'Market Heatmap',
     heatmapDesc: 'Top çiftler için gerçek zamanlı RSI, MACD, SuperTrend ve AI sinyalleri',
     openHeatmap: 'Heatmap aç →',
+    topGainers: 'En çok yükselenler · 24s',
+    topLosers: 'En çok düşenler · 24s',
   },
   common: {
     loading: 'Yükleniyor…',

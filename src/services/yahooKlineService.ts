@@ -48,24 +48,57 @@ export function toYahooTicker(type: KlineAssetType, symbol: string): string | nu
   return symbol;
 }
 
+/** Candle duration per app interval — Yahoo does not return closeTime. */
+const INTERVAL_MS: Record<string, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  "30m": 30 * 60_000,
+  "1h": 3_600_000,
+  "4h": 4 * 3_600_000,
+  "1d": 86_400_000,
+  "1w": 7 * 86_400_000,
+};
+
+const FOUR_H_MS = 4 * 3_600_000;
+
+/**
+ * Bucket hourly candles onto real 4h wall-clock boundaries. Fixed groups-of-4
+ * would drift with the series start and merge overnight/weekend market gaps
+ * into one bogus candle.
+ */
 function resampleTo4h(hourly: Kline[]): Kline[] {
   const out: Kline[] = [];
-  for (let i = 0; i + 3 < hourly.length; i += 4) {
-    const chunk = hourly.slice(i, i + 4);
+  let bucket: Kline[] = [];
+  let bucketStart = -1;
+
+  const flush = () => {
+    if (!bucket.length) return;
     out.push({
-      openTime: chunk[0].openTime,
-      open: chunk[0].open,
-      high: Math.max(...chunk.map((k) => k.high)),
-      low: Math.min(...chunk.map((k) => k.low)),
-      close: chunk[chunk.length - 1].close,
-      volume: chunk.reduce((s, k) => s + k.volume, 0),
-      closeTime: chunk[chunk.length - 1].closeTime,
+      openTime: bucket[0].openTime,
+      open: bucket[0].open,
+      high: Math.max(...bucket.map((k) => k.high)),
+      low: Math.min(...bucket.map((k) => k.low)),
+      close: bucket[bucket.length - 1].close,
+      volume: bucket.reduce((s, k) => s + k.volume, 0),
+      closeTime: bucketStart + FOUR_H_MS - 1,
     });
+    bucket = [];
+  };
+
+  for (const k of hourly) {
+    const start = Math.floor(k.openTime / FOUR_H_MS) * FOUR_H_MS;
+    if (start !== bucketStart) {
+      flush();
+      bucketStart = start;
+    }
+    bucket.push(k);
   }
+  flush();
   return out;
 }
 
-function parseYahooCandles(result: YahooChartResult): Kline[] {
+function parseYahooCandles(result: YahooChartResult, intervalMs: number): Kline[] {
   const ts = result.timestamp ?? [];
   const q = result.indicators?.quote?.[0];
   if (!q?.close?.length) return [];
@@ -86,7 +119,7 @@ function parseYahooCandles(result: YahooChartResult): Kline[] {
       low,
       close,
       volume: vol ?? 0,
-      closeTime: openTime + 60_000,
+      closeTime: openTime + intervalMs - 1,
     });
   }
   return klines;
@@ -108,6 +141,7 @@ export async function fetchYahooKlines(
 
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; MarketScanner/1.0)" },
+    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) {
     throw new Error(`Yahoo klines ${ticker}/${interval}: ${res.status}`);
@@ -117,7 +151,9 @@ export async function fetchYahooKlines(
   const result = data.chart?.result?.[0];
   if (!result) return [];
 
-  let klines = parseYahooCandles(result);
+  // The 4h series is resampled from 1h source candles.
+  const sourceMs = interval === "4h" ? INTERVAL_MS["1h"] : INTERVAL_MS[interval] ?? INTERVAL_MS["1h"];
+  let klines = parseYahooCandles(result, sourceMs);
   if (interval === "4h") {
     klines = resampleTo4h(klines);
   }

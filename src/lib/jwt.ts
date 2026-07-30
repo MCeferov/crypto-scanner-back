@@ -24,5 +24,17 @@ export function signToken(payload: JwtPayload): string {
 }
 
 export function verifyToken(token: string): JwtPayload {
-  return jwt.verify(token, getSecret(), { algorithms: ["HS256"] }) as JwtPayload;
+  const decoded = jwt.verify(token, getSecret(), { algorithms: ["HS256"] });
+  // Reject structurally-invalid payloads: a token signed with the same secret
+  // but a different shape would otherwise produce userId === undefined and
+  // crash downstream Prisma lookups.
+  if (
+    typeof decoded !== "object" ||
+    decoded === null ||
+    typeof (decoded as JwtPayload).userId !== "string" ||
+    typeof (decoded as JwtPayload).email !== "string"
+  ) {
+    throw new jwt.JsonWebTokenError("Malformed token payload");
+  }
+  return decoded as JwtPayload;
 }

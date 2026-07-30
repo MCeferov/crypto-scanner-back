@@ -84,19 +84,33 @@ export class MarketDataService {
 }
 
 /** Singleton for DI in api-server */
-let instance: MarketDataService | null = null;
+let instancePromise: Promise<MarketDataService> | null = null;
 
 export async function getMarketDataService(config?: MarketDataConfig): Promise<MarketDataService> {
-  if (!instance) {
-    instance = new MarketDataService();
-    await instance.init(config);
+  // Cache the promise, not the instance: caching the instance before init
+  // resolves lets a concurrent caller receive a half-initialized service.
+  if (!instancePromise) {
+    instancePromise = (async () => {
+      const svc = new MarketDataService();
+      await svc.init(config);
+      return svc;
+    })().catch((err) => {
+      instancePromise = null; // allow retry after a failed init
+      throw err;
+    });
   }
-  return instance;
+  return instancePromise;
 }
 
 export async function shutdownMarketDataService(): Promise<void> {
-  if (instance) {
-    await instance.shutdown();
-    instance = null;
+  if (instancePromise) {
+    const pending = instancePromise;
+    instancePromise = null;
+    try {
+      const svc = await pending;
+      await svc.shutdown();
+    } catch {
+      /* init already failed — nothing to shut down */
+    }
   }
 }

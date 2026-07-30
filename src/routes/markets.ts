@@ -23,6 +23,14 @@ function parseList(param: string | string[] | undefined): string[] {
 }
 
 const VALID_TYPES = new Set<KlineAssetType>(["crypto", "stock", "forex", "commodity"]);
+const VALID_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "12h", "1d", "3d", "1w"]);
+
+/** Whitelist intervals — arbitrary strings would flow into upstream URLs and cache keys. */
+function sanitizeIntervals(raw: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(raw)) return fallback;
+  const valid = raw.filter((i): i is string => typeof i === "string" && VALID_INTERVALS.has(i));
+  return valid.length ? valid.slice(0, 8) : fallback;
+}
 
 function toKlineAsset(type: KlineAssetType, symbol: string): KlineAsset {
   const sym = symbol.toUpperCase();
@@ -81,7 +89,7 @@ router.get("/klines/chart", async (req: Request, res: Response) => {
 router.post("/klines/batch", async (req: Request, res: Response) => {
   try {
     const assets = parseAssetsBody(req.body);
-    const intervals: string[] = req.body?.intervals ?? ["15m", "1h", "4h"];
+    const intervals = sanitizeIntervals(req.body?.intervals, ["15m", "1h", "4h"]);
 
     if (assets.length > 0) {
       const refresh = req.body?.refresh === true;
@@ -111,7 +119,7 @@ router.post("/klines/batch", async (req: Request, res: Response) => {
 router.get("/klines/stream", async (req: Request, res: Response) => {
   const assetsParam = parseAssetsParam(req.query.assets as string | undefined);
   const intervals = parseList(req.query.intervals as string | undefined);
-  const tfs = intervals.length ? intervals : ["15m", "1h", "4h"];
+  const tfs = sanitizeIntervals(intervals, ["15m", "1h", "4h"]);
 
   let assets = assetsParam;
   if (!assets.length) {
@@ -136,15 +144,24 @@ router.get("/klines/stream", async (req: Request, res: Response) => {
   res.setHeader("Connection", "keep-alive");
   res.write(": connected\n\n");
 
+  // Stop writing the moment the client disconnects — otherwise every SSE
+  // event after a dropped tab is a write to a destroyed socket.
+  let clientGone = false;
+  req.on("close", () => { clientGone = true; });
+  const send = (payload: unknown) => {
+    if (clientGone || res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
   try {
     await batchFetchKlinesForAssets(assets.slice(0, 80), tfs, (id, klines, done, total) => {
-      res.write(`data: ${JSON.stringify({ id, klines, done, total })}\n\n`);
+      send({ id, klines, done, total });
     }, { bypassCache: refresh });
-    res.write(`data: ${JSON.stringify({ complete: true })}\n\n`);
+    send({ complete: true });
   } catch (err) {
-    res.write(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : "stream failed" })}\n\n`);
+    send({ error: err instanceof Error ? err.message : "stream failed" });
   }
-  res.end();
+  if (!res.writableEnded) res.end();
 });
 
 router.get("/klines/stats", (_req: Request, res: Response) => {
@@ -197,23 +214,31 @@ router.get("/commodities", async (_req: Request, res: Response) => {
 });
 
 router.get("/health", async (_req: Request, res: Response) => {
-  const svc = await getMarketDataService();
-  res.json({
-    cache: svc.getCacheKind(),
-    providers: svc.getProviderHealth(),
-  });
+  try {
+    const svc = await getMarketDataService();
+    res.json({
+      cache: svc.getCacheKind(),
+      providers: svc.getProviderHealth(),
+    });
+  } catch (err) {
+    res.status(503).json({ error: err instanceof Error ? err.message : "market data unavailable" });
+  }
 });
 
 router.get("/asset/:symbol", async (req: Request, res: Response) => {
-  const assetClass = (req.query.class as AssetClass) ?? "crypto";
-  const symbol = String(req.params.symbol);
-  const svc = await getMarketDataService();
-  const asset = await svc.getAsset(symbol, assetClass);
-  if (!asset) {
-    res.status(404).json({ error: "Asset not found" });
-    return;
+  try {
+    const assetClass = (req.query.class as AssetClass) ?? "crypto";
+    const symbol = String(req.params.symbol);
+    const svc = await getMarketDataService();
+    const asset = await svc.getAsset(symbol, assetClass);
+    if (!asset) {
+      res.status(404).json({ error: "Asset not found" });
+      return;
+    }
+    res.json({ data: asset });
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "asset lookup failed" });
   }
-  res.json({ data: asset });
 });
 
 export default router;

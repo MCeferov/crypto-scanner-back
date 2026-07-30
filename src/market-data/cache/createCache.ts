@@ -44,6 +44,10 @@ export async function createCacheService(redisUrl?: string): Promise<{
     connectTimeout: 3_000,
   });
 
+  // Without a listener, a dropped connection after startup emits an
+  // unhandled 'error' event and crashes the process.
+  redis.on('error', () => {});
+
   try {
     await redis.connect();
     await redis.ping();

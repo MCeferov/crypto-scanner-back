@@ -33,6 +33,21 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+const MAX_CACHE_ENTRIES = 1500;
+const FETCH_TIMEOUT_MS = 15_000;
+
+/** Drop expired entries; if still over cap, drop oldest. Called on every write. */
+function pruneKlineCache(): void {
+  const now = Date.now();
+  for (const [key, entry] of cache) {
+    if (now - entry.at > CACHE_TTL_MS) cache.delete(key);
+  }
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
 
 const PREWARM_SYMBOLS = [
   "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
@@ -80,9 +95,13 @@ async function fetchBinanceKline(
   const limit = opts.limit ?? KLINE_LIMIT;
   const base = symbol.replace(/USDT$/, "");
   const key = cacheKey(`crypto:${base}`, interval);
+  // The cache only ever holds full KLINE_LIMIT series — serve smaller requests
+  // by slicing, never cache partial results (they would poison the batch path).
   if (!opts.bypassCache && limit <= KLINE_LIMIT) {
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS && hit.data.length >= Math.min(limit, hit.data.length)) {
+      return limit < hit.data.length ? hit.data.slice(-limit) : hit.data;
+    }
   }
 
   const maxPerReq = 1000;
@@ -95,7 +114,7 @@ async function fetchBinanceKline(
       `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${batchSize}`;
     if (endTime != null) url += `&endTime=${endTime}`;
 
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`Klines ${symbol}/${interval}: ${res.status} ${body.slice(0, 80)}`);
@@ -120,8 +139,11 @@ async function fetchBinanceKline(
   data.sort((a, b) => a.openTime - b.openTime);
   const trimmed = data.length > limit ? data.slice(-limit) : data;
 
-  if (limit <= KLINE_LIMIT) {
+  // Only cache full-size series — a short fetch stored under the shared key
+  // would later be served to the heatmap as if it were the full history.
+  if (limit === KLINE_LIMIT) {
     cache.set(key, { at: Date.now(), data: trimmed });
+    pruneKlineCache();
   }
   return trimmed;
 }
@@ -133,16 +155,21 @@ async function fetchAssetKline(
 ): Promise<Kline[]> {
   const limit = opts.limit ?? KLINE_LIMIT;
   const key = cacheKey(asset.id, interval);
-  if (!opts.bypassCache) {
+  if (!opts.bypassCache && limit <= KLINE_LIMIT) {
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+      return limit < hit.data.length ? hit.data.slice(-limit) : hit.data;
+    }
   }
 
   const data = asset.type === "crypto"
     ? await fetchBinanceKline(asset.symbol, interval, { bypassCache: true, limit })
     : await fetchYahooKlines(asset.type, asset.symbol, interval, limit);
 
-  cache.set(key, { at: Date.now(), data });
+  if (limit === KLINE_LIMIT) {
+    cache.set(key, { at: Date.now(), data });
+    pruneKlineCache();
+  }
   return data;
 }
 
@@ -207,7 +234,12 @@ export async function batchFetchKlinesForAssets(
     completedIntervals.set(asset.id, count);
     if (count === intervalCount) {
       done++;
-      onAsset?.(asset.id, result[asset.id], done, total);
+      try {
+        onAsset?.(asset.id, result[asset.id], done, total);
+      } catch {
+        // A throwing callback (e.g. res.write on a disconnected SSE client)
+        // must not abort the remaining pool tasks.
+      }
     }
   });
 
@@ -272,7 +304,11 @@ export async function batchFetchKlines(
     completedIntervals.set(symbol, count);
     if (count === intervalCount) {
       done++;
-      onSymbol?.(symbol, result[symbol], done, total);
+      try {
+        onSymbol?.(symbol, result[symbol], done, total);
+      } catch {
+        // Callback failures must not abort the remaining pool tasks.
+      }
     }
   });
 

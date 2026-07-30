@@ -17,7 +17,8 @@ export function rateLimit(opts: {
 
   return (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const key = `${keyPrefix}:${ip}`;
+    // Path is part of the key — otherwise signup spam consumes the login budget.
+    const key = `${keyPrefix}:${req.path}:${ip}`;
     const now = Date.now();
     let bucket = buckets.get(key);
 
