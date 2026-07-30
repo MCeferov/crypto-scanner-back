@@ -4,19 +4,20 @@ import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-config({ path: path.resolve(dir, "../.env") });
+const repoRoot = path.resolve(dir, "..", "..", "..");
+config({ path: path.join(repoRoot, ".env") });
 
 const prisma = new PrismaClient();
 
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) {
-    console.error("FAIL: DATABASE_URL is not set in lib/prisma/.env");
+    console.error("FAIL: DATABASE_URL is not set in the repo root .env");
     process.exit(1);
   }
 
   if (url.includes("YOUR_PASSWORD")) {
-    console.error("FAIL: Replace YOUR_PASSWORD in lib/prisma/.env with your real PostgreSQL password");
+    console.error("FAIL: Replace YOUR_PASSWORD in the repo root .env with your real database password");
     process.exit(1);
   }
 
