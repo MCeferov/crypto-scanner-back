@@ -5,6 +5,12 @@
     "tsBuildInfoFile": ".tsbuildinfo",
     "rootDir": "../..",
     "noEmit": true,
+    // "dom" is required for a deterministic global `Response` type. @types/node
+    // declares `type _Response = typeof globalThis extends { onmessage: any } ? {} : undici.Response`,
+    // so in environments where DOM globals are detected without the dom lib
+    // loaded, `Response` collapses to `{}` and every `res.text()/.ok/.status`
+    // fails to compile (seen on CI/Vercel, not locally).
+    "lib": ["es2022", "dom"],
     "types": ["node"],
     "paths": {
       "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],

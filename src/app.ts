@@ -1,9 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import { pinoHttp } from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+
+/**
+ * Single-service deploy: when the built SPA is present the API also serves it,
+ * so frontend and API share one origin (no CORS, no proxy hop, and the SSE
+ * kline stream is not passed through a third-party edge with its own timeout).
+ */
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const staticDir = process.env.STATIC_DIR
+  ?? path.join(repoRoot, "artifacts/crypto-heatmap/dist/public");
+const serveStatic = existsSync(path.join(staticDir, "index.html"));
 
 const app: Express = express();
 
@@ -32,8 +45,12 @@ app.use(
 );
 const corsOrigin = process.env.CORS_ORIGIN;
 const isProd = process.env.NODE_ENV === "production";
-if (isProd && !corsOrigin) {
-  throw new Error("CORS_ORIGIN must be set in production");
+// Same-origin deploys make cross-origin requests impossible, so CORS_ORIGIN is
+// only mandatory when the frontend is hosted somewhere else.
+if (isProd && !corsOrigin && !serveStatic) {
+  throw new Error(
+    "CORS_ORIGIN must be set in production when the API does not serve the frontend",
+  );
 }
 app.use(
   cors({
@@ -51,6 +68,29 @@ app.use("/api", router);
 app.use("/api", (_req: Request, res: Response) => {
   res.status(404).json({ message: "Not found" });
 });
+
+if (serveStatic) {
+  logger.info({ staticDir }, "Serving frontend");
+  // Hashed asset filenames are immutable; index.html must never be cached or
+  // clients keep booting an old bundle after a deploy.
+  app.use(
+    express.static(staticDir, {
+      index: false,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
+  // SPA fallback — client-side routing owns every non-API path.
+  app.get(/.*/, (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+}
 
 // Final safety net: without this, Express 5 renders an HTML stack trace
 // for any route that throws outside its own try/catch.

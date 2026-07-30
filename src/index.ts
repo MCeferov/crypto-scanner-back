@@ -5,8 +5,14 @@ import { logger } from "./lib/logger";
 import { prisma } from "@workspace/prisma";
 import { prewarmKlineCache } from "./services/klineBatchService.js";
 
-/** API always listens on API_PORT (default 8080). Do not inherit frontend PORT (e.g. 23508). */
-const rawPort = process.env.API_PORT ?? "8080";
+/**
+ * API_PORT wins everywhere. In development we deliberately ignore PORT because
+ * the Replit workflow uses it for the frontend dev server (e.g. 23508); in
+ * production PORT is what hosting platforms (Render, Fly, Railway) inject.
+ */
+const rawPort = process.env.API_PORT
+  ?? (process.env.NODE_ENV === "production" ? process.env.PORT : undefined)
+  ?? "8080";
 
 const port = Number(rawPort);
 
