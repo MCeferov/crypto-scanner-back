@@ -73,7 +73,6 @@ export const messages: MessageTree = {
     atr: 'ATR',
     stoch: 'Stoch',
     st: 'ST',
-    bb: 'BB',
     trend: 'Тренд',
     trendScore: 'Скор',
     mtf: 'TF',
@@ -94,7 +93,6 @@ export const messages: MessageTree = {
     setupFinal: 'Итог',
     stTrend: 'тренд',
     stochRsi: 'RSI',
-    bbPercent: '%B',
     extraVol: 'Объём',
   },
   toolbar: {
