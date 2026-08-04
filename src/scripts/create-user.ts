@@ -11,7 +11,7 @@
  */
 import "../env";
 
-import { prisma } from "@workspace/prisma";
+import { prisma } from "../db/prisma";
 import { hashPassword } from "../lib/password";
 import { sanitizeEmail, sanitizeUsername } from "../lib/sanitize";
 import { formatZodError, signupSchema } from "../validators/auth";

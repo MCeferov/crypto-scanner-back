@@ -1,26 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import { pinoHttp } from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
-/**
- * Single-service deploy: when the built SPA is present the API also serves it,
- * so frontend and API share one origin (no CORS, no proxy hop, and the SSE
- * kline stream is not passed through a third-party edge with its own timeout).
- */
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const staticDir = process.env.STATIC_DIR
-  ?? path.join(repoRoot, "artifacts/crypto-heatmap/dist/public");
-const serveStatic = existsSync(path.join(staticDir, "index.html"));
-
 const app: Express = express();
 
-// Behind the Vite dev proxy / platform router — needed for correct req.ip in rate limiting.
+// Behind Railway's router / the Vite dev proxy — needed for correct req.ip in rate limiting.
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
@@ -43,21 +30,42 @@ app.use(
     },
   }),
 );
-const corsOrigin = process.env.CORS_ORIGIN;
+
+/**
+ * This API runs on its own origin (Railway) and the SPA on another (Netlify),
+ * so CORS is the only thing standing between the browser and the API.
+ * FRONTEND_URL is a comma-separated allowlist of exact origins; CORS_ORIGIN is
+ * accepted as a legacy alias.
+ *
+ * In development an unset value means "reflect any origin", which keeps
+ * localhost and LAN testing frictionless. In production an empty allowlist is
+ * a configuration error, not a reason to open the API to every site on the
+ * internet — so the server refuses to boot.
+ */
 const isProd = process.env.NODE_ENV === "production";
-// Same-origin deploys make cross-origin requests impossible, so CORS_ORIGIN is
-// only mandatory when the frontend is hosted somewhere else.
-if (isProd && !corsOrigin && !serveStatic) {
+const rawOrigins = process.env.FRONTEND_URL ?? process.env.CORS_ORIGIN ?? "";
+const allowedOrigins = rawOrigins
+  .split(",")
+  .map((o) => o.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
+if (isProd && allowedOrigins.length === 0) {
   throw new Error(
-    "CORS_ORIGIN must be set in production when the API does not serve the frontend",
+    "FRONTEND_URL must be set in production — it is the CORS allowlist for the SPA origin(s), e.g. https://crypto-heatmap.netlify.app",
   );
 }
+
 app.use(
   cors({
-    origin: corsOrigin ? corsOrigin.split(",").map((o) => o.trim()) : true,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: true,
   }),
 );
+logger.info(
+  { cors: allowedOrigins.length > 0 ? allowedOrigins : "reflect-any (development)" },
+  "CORS configured",
+);
+
 app.use(express.json({ limit: "256kb" }));
 app.use(express.urlencoded({ extended: true, limit: "256kb" }));
 
@@ -69,28 +77,16 @@ app.use("/api", (_req: Request, res: Response) => {
   res.status(404).json({ message: "Not found" });
 });
 
-if (serveStatic) {
-  logger.info({ staticDir }, "Serving frontend");
-  // Hashed asset filenames are immutable; index.html must never be cached or
-  // clients keep booting an old bundle after a deploy.
-  app.use(
-    express.static(staticDir, {
-      index: false,
-      setHeaders(res, filePath) {
-        if (filePath.endsWith("index.html")) {
-          res.setHeader("Cache-Control", "no-cache");
-        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        }
-      },
-    }),
-  );
-  // SPA fallback — client-side routing owns every non-API path.
-  app.get(/.*/, (_req: Request, res: Response) => {
-    res.setHeader("Cache-Control", "no-cache");
-    res.sendFile(path.join(staticDir, "index.html"));
-  });
-}
+// API-only service; the SPA is hosted separately. A bare root request (uptime
+// pings, someone opening the Railway URL) gets a useful JSON answer instead of
+// an Express HTML 404.
+app.get("/", (_req: Request, res: Response) => {
+  res.json({ service: "crypto-heatmap-backend", health: "/api/healthz" });
+});
+
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({ message: "Not found" });
+});
 
 // Final safety net: without this, Express 5 renders an HTML stack trace
 // for any route that throws outside its own try/catch.

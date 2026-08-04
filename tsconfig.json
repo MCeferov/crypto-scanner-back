@@ -1,24 +1,31 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"],
   "compilerOptions": {
     "incremental": true,
-    "tsBuildInfoFile": ".tsbuildinfo",
-    "rootDir": "../..",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.tsbuildinfo",
+    "rootDir": ".",
     "noEmit": true,
-    // "dom" is required for a deterministic global `Response` type. @types/node
-    // declares `type _Response = typeof globalThis extends { onmessage: any } ? {} : undici.Response`,
-    // so in environments where DOM globals are detected without the dom lib
-    // loaded, `Response` collapses to `{}` and every `res.text()/.ok/.status`
-    // fails to compile (seen on CI/Vercel, not locally).
+    "isolatedModules": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
     "lib": ["es2022", "dom"],
     "types": ["node"],
-    "paths": {
-      "@workspace/api-zod": ["../../lib/api-zod/src/index.ts"],
-      "@workspace/api-zod/*": ["../../lib/api-zod/src/*"],
-      "@workspace/prisma": ["../../lib/prisma/src/index.ts"],
-      "@workspace/market-data": ["../../lib/market-data/src/index.ts"],
-      "@workspace/i18n": ["../../lib/i18n/src/index.ts"]
-    }
-  },
-  "include": ["src"]
+    "skipLibCheck": true,
+
+    "noEmitOnError": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": false,
+    "noImplicitReturns": true,
+    "noUnusedLocals": false,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": false,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "useUnknownInCatchVariables": true,
+    "alwaysStrict": true
+  }
 }

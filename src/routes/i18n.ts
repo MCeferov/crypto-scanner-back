@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { getLocaleMeta, getMessages, isValidLocale, DEFAULT_LOCALE } from "@workspace/i18n";
+import { getLocaleMeta, getMessages, isValidLocale, DEFAULT_LOCALE } from "../i18n";
 
 const router: IRouter = Router();
 

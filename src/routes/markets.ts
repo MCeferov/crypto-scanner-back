@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import type { AssetClass } from "@workspace/market-data";
+import type { AssetClass } from "../market-data";
 import { getMarketDataService } from "../market/bootstrap.js";
 import {
   batchFetchKlinesForAssets,

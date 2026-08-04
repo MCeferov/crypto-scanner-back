@@ -1,0 +1,37 @@
+# API-only deploy on Railway. The SPA is hosted separately on Netlify.
+#
+# TWO THINGS THIS FILE CANNOT SET — do them in the Railway dashboard:
+#
+#   1. REGION must be europe-west4 (Amsterdam) or another EU region.
+#      Railway defaults to us-west1, and Binance answers HTTP 451 to US IPs,
+#      which breaks the entire market data pipeline.
+#
+#   2. VARIABLES — the server exits at boot without these:
+#        DATABASE_URL   PostgreSQL connection string (Neon/Supabase/Railway PG)
+#        JWT_SECRET     >= 32 characters
+#        FRONTEND_URL   the Netlify origin, e.g. https://your-site.netlify.app
+#                       (comma-separated for multiple origins)
+#      Recommended:
+#        NODE_ENV=production
+#        BINANCE_API_BASE=https://data-api.binance.vision/api/v3
+#      PORT is injected by Railway — do not set it.
+
+[build]
+  # --prod=false is mandatory: NODE_ENV=production is set on the service, and
+  # the build toolchain (esbuild, typescript) plus the Prisma CLI used by the
+  # postinstall `prisma generate` all live in devDependencies.
+  buildCommand = "pnpm install --frozen-lockfile --prod=false && pnpm build"
+
+[deploy]
+  # Migrations belong here, not in the build: this runs once per deploy with the
+  # runtime variables, and a failure aborts the rollout instead of shipping a
+  # server whose schema does not match. `prisma migrate deploy` is idempotent.
+  preDeployCommand = "pnpm db:migrate"
+  startCommand = "pnpm start"
+  healthcheckPath = "/api/healthz"
+  healthcheckTimeout = 300
+  restartPolicyType = "ON_FAILURE"
+  # Single replica, deliberately. The kline cache, Binance proxy cache and
+  # rate-limit buckets are all in-process — a second replica would double the
+  # Binance traffic and split the rate-limit accounting.
+  numReplicas = 1

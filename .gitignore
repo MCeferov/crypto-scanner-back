@@ -1,0 +1,28 @@
+# dependencies
+node_modules
+
+# build output
+dist
+*.tsbuildinfo
+
+# env — never commit real secrets; .env.example is the template
+.env
+.env.local
+.env.*.local
+
+# prisma generated client
+/prisma/generated
+
+# editors
+/.idea
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

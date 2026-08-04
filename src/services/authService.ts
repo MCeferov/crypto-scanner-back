@@ -1,4 +1,4 @@
-import { prisma } from "@workspace/prisma";
+import { prisma } from "../db/prisma";
 import { AppError } from "../lib/errors";
 import { hashPassword, verifyPassword } from "../lib/password";
 import { signToken } from "../lib/jwt";

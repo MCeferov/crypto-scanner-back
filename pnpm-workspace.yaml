@@ -1,0 +1,15 @@
+# Not a workspace — this file only carries pnpm settings for a single package.
+#
+# SECURITY: an npm version must have been published for at least 1 day before
+# pnpm will install it. Malicious releases are usually pulled within hours, so
+# this delay is a strong supply-chain buffer. Do not set it to 0.
+minimumReleaseAge: 1440
+
+# pnpm 10+ blocks postinstall scripts unless the package is approved here.
+# prisma/@prisma/* generate the client; bcrypt compiles a native addon.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  bcrypt: true
+  esbuild: true
+  prisma: true

@@ -1,5 +1,5 @@
-import { getMarketDataService as createService } from "@workspace/market-data";
-import type { MarketDataService } from "@workspace/market-data";
+import { getMarketDataService as createService } from "../market-data";
+import type { MarketDataService } from "../market-data";
 import { logger } from "../lib/logger.js";
 
 let servicePromise: Promise<MarketDataService> | null = null;

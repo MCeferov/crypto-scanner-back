@@ -2,22 +2,20 @@ import "./env";
 
 import app from "./app";
 import { logger } from "./lib/logger";
-import { prisma } from "@workspace/prisma";
+import { prisma } from "./db/prisma";
 import { prewarmKlineCache } from "./services/klineBatchService.js";
 
 /**
- * API_PORT wins everywhere. In development we deliberately ignore PORT because
- * the Replit workflow uses it for the frontend dev server (e.g. 23508); in
- * production PORT is what hosting platforms (Render, Fly, Railway) inject.
+ * PORT is what every hosting platform injects (Railway, Render, Fly) and what
+ * .env.example documents for local dev. Nothing else competes for it now that
+ * the frontend lives in its own repo. API_PORT stays as a legacy override.
  */
-const rawPort = process.env.API_PORT
-  ?? (process.env.NODE_ENV === "production" ? process.env.PORT : undefined)
-  ?? "8080";
+const rawPort = process.env.PORT ?? process.env.API_PORT ?? "3000";
 
 const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid API_PORT value: "${rawPort}"`);
+  throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
 /* Fail fast on misconfiguration instead of 500-ing on the first login. */
