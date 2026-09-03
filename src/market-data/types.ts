@@ -27,7 +27,7 @@ export interface MarketDataProvider {
   getCryptoMarkets(symbols?: string[]): Promise<NormalizedAsset[]>;
   getStocks(symbols?: string[]): Promise<NormalizedAsset[]>;
   getForex(pairs?: string[]): Promise<NormalizedAsset[]>;
-  getCommodities(): Promise<NormalizedAsset[]>;
+  getCommodities(symbols?: string[]): Promise<NormalizedAsset[]>;
   getAsset(symbol: string, assetClass: AssetClass): Promise<NormalizedAsset | null>;
   healthCheck(): Promise<boolean>;
 }
@@ -65,14 +65,54 @@ export const DEFAULT_CRYPTO_SYMBOLS = [
 ];
 
 export const DEFAULT_STOCK_SYMBOLS = [
-  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'TSLA', 'META', 'JPM', 'V', 'WMT',
+  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'TSLA', 'GOOGL', 'META', 'AMD',
+  'NFLX', 'INTC', 'JPM', 'V', 'MA', 'DIS', 'BA', 'KO',
+  'PEP', 'WMT', 'XOM', 'PFE', 'BABA', 'UBER', 'COIN', 'PLTR',
 ];
 
 export const DEFAULT_FOREX_PAIRS = [
-  'EURUSD', 'GBPUSD', 'USDTRY', 'USDAZN', 'USDJPY',
+  'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD', 'EURGBP',
+  'EURJPY', 'GBPJPY', 'AUDJPY', 'EURCHF', 'USDTRY', 'EURTRY', 'USDAZN', 'USDRUB',
+  'USDCNY', 'USDINR', 'USDMXN', 'USDZAR', 'USDSEK', 'USDNOK',
 ];
 
-export const COMMODITY_SYMBOLS = ['GOLD', 'SILVER', 'OIL', 'NATGAS'];
+export interface CommoditySpec {
+  /** Yahoo Finance futures ticker */
+  yahoo: string;
+  name: string;
+}
+
+/**
+ * The single source of truth for commodities: both the quote path
+ * (YahooFinanceProvider) and the kline path (yahooKlineService) resolve tickers
+ * through this map. They used to keep separate copies, which is why a symbol
+ * could return a quote and still 404 on its chart.
+ *
+ * Keys are the public symbols the frontend builds asset ids from
+ * (`commodity:GOLD`) and stores in localStorage favourites — never rename one.
+ */
+export const COMMODITY_SPECS: Record<string, CommoditySpec> = {
+  GOLD:      { yahoo: 'GC=F', name: 'Gold' },
+  SILVER:    { yahoo: 'SI=F', name: 'Silver' },
+  OIL:       { yahoo: 'CL=F', name: 'Crude Oil' },
+  NATGAS:    { yahoo: 'NG=F', name: 'Natural Gas' },
+  COPPER:    { yahoo: 'HG=F', name: 'Copper' },
+  PLATINUM:  { yahoo: 'PL=F', name: 'Platinum' },
+  PALLADIUM: { yahoo: 'PA=F', name: 'Palladium' },
+  BRENT:     { yahoo: 'BZ=F', name: 'Brent Crude Oil' },
+  GASOLINE:  { yahoo: 'RB=F', name: 'RBOB Gasoline' },
+  HEATOIL:   { yahoo: 'HO=F', name: 'Heating Oil' },
+  WHEAT:     { yahoo: 'ZW=F', name: 'Wheat' },
+  CORN:      { yahoo: 'ZC=F', name: 'Corn' },
+  SOYBEAN:   { yahoo: 'ZS=F', name: 'Soybean' },
+  SUGAR:     { yahoo: 'SB=F', name: 'Sugar' },
+  COFFEE:    { yahoo: 'KC=F', name: 'Coffee' },
+  COCOA:     { yahoo: 'CC=F', name: 'Cocoa' },
+  COTTON:    { yahoo: 'CT=F', name: 'Cotton' },
+  CATTLE:    { yahoo: 'LE=F', name: 'Live Cattle' },
+};
+
+export const COMMODITY_SYMBOLS: string[] = Object.keys(COMMODITY_SPECS);
 
 /** Human-readable names for known symbols */
 export const ASSET_NAMES: Record<string, string> = {

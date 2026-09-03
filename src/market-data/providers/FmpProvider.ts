@@ -71,8 +71,10 @@ export class FmpProvider extends BaseProvider {
     }
   }
 
-  override async getCommodities(): Promise<NormalizedAsset[]> {
+  /** Fallback coverage only — FMP's free commodity feed maps cleanly to GOLD/SILVER. */
+  override async getCommodities(symbols?: string[]): Promise<NormalizedAsset[]> {
     if (!this.enabled()) return [];
+    const want = symbols?.length ? new Set(symbols.map(s => s.toUpperCase())) : null;
     try {
       const data = await fetchJson<FmpQuote[]>(
         `https://financialmodelingprep.com/api/v3/quotes/commodity?apikey=${this.apiKey}`,
@@ -90,7 +92,8 @@ export class FmpProvider extends BaseProvider {
           source: this.name,
           assetClass: 'commodities' as const,
           lastUpdated: nowIso(),
-        }));
+        }))
+        .filter(a => !want || want.has(a.symbol));
     } catch {
       return [];
     }

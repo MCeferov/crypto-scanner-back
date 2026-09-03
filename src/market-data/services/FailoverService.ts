@@ -114,8 +114,9 @@ export class FailoverService {
     return this.fetchWithFailover('forex', p => p.getForex(pairs), suffix);
   }
 
-  async getCommodities(): Promise<NormalizedAsset[]> {
-    return this.fetchWithFailover('commodities', p => p.getCommodities(), 'default');
+  async getCommodities(symbols?: string[]): Promise<NormalizedAsset[]> {
+    const suffix = symbols?.join(',') ?? 'default';
+    return this.fetchWithFailover('commodities', p => p.getCommodities(symbols), suffix);
   }
 
   async getAsset(symbol: string, assetClass: AssetClass): Promise<NormalizedAsset | null> {

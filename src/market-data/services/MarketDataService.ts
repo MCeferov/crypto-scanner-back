@@ -1,4 +1,5 @@
 import { createCacheService } from '../cache/createCache.js';
+import { withMarketCaps } from '../enrich/cryptoMarketCaps.js';
 import { ProviderBlacklist } from '../failover/ProviderBlacklist.js';
 import { AlphaVantageProvider } from '../providers/AlphaVantageProvider.js';
 import { BinanceProvider } from '../providers/BinanceProvider.js';
@@ -63,7 +64,7 @@ export class MarketDataService {
   }
 
   async getCryptoMarkets(symbols?: string[]): Promise<NormalizedAsset[]> {
-    return this.failover.getCrypto(symbols);
+    return withMarketCaps(await this.failover.getCrypto(symbols));
   }
 
   async getStocks(symbols?: string[]): Promise<NormalizedAsset[]> {
@@ -74,8 +75,8 @@ export class MarketDataService {
     return this.failover.getForex(pairs);
   }
 
-  async getCommodities(): Promise<NormalizedAsset[]> {
-    return this.failover.getCommodities();
+  async getCommodities(symbols?: string[]): Promise<NormalizedAsset[]> {
+    return this.failover.getCommodities(symbols);
   }
 
   async getAsset(symbol: string, assetClass: AssetClass): Promise<NormalizedAsset | null> {

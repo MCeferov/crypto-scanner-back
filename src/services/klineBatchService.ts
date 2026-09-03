@@ -9,6 +9,35 @@ export const KLINE_LIMIT = 1000;
 const CACHE_TTL_MS = 90_000;
 /** Bütün (symbol×interval) sorğuları üçün vahid pool — 16×3=48 əvəzinə 24 */
 const MAX_CONCURRENT = 24;
+/**
+ * Yahoo tasks get their own, much smaller pool. They queue behind a shared
+ * upstream gate, and in a single pool enough blocked Yahoo tasks would occupy
+ * every slot a Binance task could have used.
+ */
+const YAHOO_TASK_CONCURRENT = 8;
+
+/**
+ * Yahoo rate-limits far harder than Binance and its candles only move once per
+ * bar, so each timeframe keeps its series roughly as long as the bar it
+ * describes: a 1m series is stale in a minute, a daily one holds for an hour.
+ * Without this the frontend's 60s non-crypto refresh would re-fetch every
+ * (symbol × timeframe) from Yahoo every single minute.
+ */
+const YAHOO_TTL_MS: Record<string, number> = {
+  "1m": 60_000,
+  "5m": 5 * 60_000,
+  "15m": 10 * 60_000,
+  "30m": 15 * 60_000,
+  "1h": 30 * 60_000,
+  "4h": 45 * 60_000,
+  "1d": 60 * 60_000,
+  "1w": 3 * 60 * 60_000,
+};
+const YAHOO_TTL_FALLBACK_MS = 15 * 60_000;
+
+function ttlFor(type: KlineAssetType, interval: string): number {
+  return type === "crypto" ? CACHE_TTL_MS : YAHOO_TTL_MS[interval] ?? YAHOO_TTL_FALLBACK_MS;
+}
 
 export interface Kline {
   openTime: number;
@@ -30,6 +59,8 @@ export interface KlineAsset {
 interface CacheEntry {
   at: number;
   data: Kline[];
+  /** Per-entry lifetime — crypto and each Yahoo timeframe expire differently. */
+  ttl: number;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -40,7 +71,7 @@ const FETCH_TIMEOUT_MS = 15_000;
 function pruneKlineCache(): void {
   const now = Date.now();
   for (const [key, entry] of cache) {
-    if (now - entry.at > CACHE_TTL_MS) cache.delete(key);
+    if (now - entry.at > entry.ttl) cache.delete(key);
   }
   while (cache.size > MAX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value;
@@ -99,7 +130,7 @@ async function fetchBinanceKline(
   // by slicing, never cache partial results (they would poison the batch path).
   if (!opts.bypassCache && limit <= KLINE_LIMIT) {
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS && hit.data.length >= Math.min(limit, hit.data.length)) {
+    if (hit && Date.now() - hit.at < hit.ttl && hit.data.length >= Math.min(limit, hit.data.length)) {
       return limit < hit.data.length ? hit.data.slice(-limit) : hit.data;
     }
   }
@@ -142,7 +173,7 @@ async function fetchBinanceKline(
   // Only cache full-size series — a short fetch stored under the shared key
   // would later be served to the heatmap as if it were the full history.
   if (limit === KLINE_LIMIT) {
-    cache.set(key, { at: Date.now(), data: trimmed });
+    cache.set(key, { at: Date.now(), data: trimmed, ttl: CACHE_TTL_MS });
     pruneKlineCache();
   }
   return trimmed;
@@ -157,7 +188,7 @@ async function fetchAssetKline(
   const key = cacheKey(asset.id, interval);
   if (!opts.bypassCache && limit <= KLINE_LIMIT) {
     const hit = cache.get(key);
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
+    if (hit && Date.now() - hit.at < hit.ttl) {
       return limit < hit.data.length ? hit.data.slice(-limit) : hit.data;
     }
   }
@@ -167,7 +198,7 @@ async function fetchAssetKline(
     : await fetchYahooKlines(asset.type, asset.symbol, interval, limit);
 
   if (limit === KLINE_LIMIT) {
-    cache.set(key, { at: Date.now(), data });
+    cache.set(key, { at: Date.now(), data, ttl: ttlFor(asset.type, interval) });
     pruneKlineCache();
   }
   return data;
@@ -224,7 +255,9 @@ export async function batchFetchKlinesForAssets(
 
   const completedIntervals = new Map<string, number>();
 
-  await runPool(tasks, MAX_CONCURRENT, async ({ asset, interval }) => {
+  // A failed symbol yields an empty series for that interval and nothing more —
+  // one delisted ticker or Yahoo hiccup must never sink the whole batch/stream.
+  const runTask = async ({ asset, interval }: Task): Promise<void> => {
     try {
       result[asset.id][interval] = await fetchAssetKline(asset, interval, opts);
     } catch {
@@ -241,7 +274,17 @@ export async function batchFetchKlinesForAssets(
         // must not abort the remaining pool tasks.
       }
     }
-  });
+  };
+
+  // Separate pools per upstream: Yahoo tasks wait on their own concurrency gate,
+  // and sharing one pool would let them hold every slot while Binance tasks —
+  // the bulk of a heatmap refresh — sit idle behind them.
+  const cryptoTasks = tasks.filter(t => t.asset.type === "crypto");
+  const yahooTasks = tasks.filter(t => t.asset.type !== "crypto");
+  await Promise.all([
+    runPool(cryptoTasks, MAX_CONCURRENT, runTask),
+    runPool(yahooTasks, YAHOO_TASK_CONCURRENT, runTask),
+  ]);
 
   logger.info({
     event: "klines_assets_batch_done",
@@ -261,7 +304,10 @@ export async function fetchSingleAssetKlines(
   limit = KLINE_LIMIT,
 ): Promise<Kline[]> {
   const asset = normalizeKlineAsset(type, symbol);
-  return fetchAssetKline(asset, interval, { bypassCache: true, limit });
+  // Binance is cheap enough to always answer a chart from source. Yahoo is not,
+  // and this endpoint is hit again on every timeframe switch in the chart UI,
+  // so non-crypto charts are served from the same TTL cache as the heatmap.
+  return fetchAssetKline(asset, interval, { bypassCache: asset.type === "crypto", limit });
 }
 
 export async function batchFetchKlines(
@@ -324,7 +370,7 @@ export async function batchFetchKlines(
 }
 
 export function getKlineCacheStats() {
-  return { entries: cache.size, ttlMs: CACHE_TTL_MS };
+  return { entries: cache.size, ttlMs: CACHE_TTL_MS, yahooTtlMs: YAHOO_TTL_MS };
 }
 
 /** Server start-da top coinləri cache-ə yüklə — ilk istifadəçi gözləmir */

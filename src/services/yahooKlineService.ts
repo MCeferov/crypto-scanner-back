@@ -1,13 +1,7 @@
+import { COMMODITY_SPECS } from "../market-data/types.js";
 import type { Kline } from "./klineBatchService.js";
 
 export type KlineAssetType = "crypto" | "stock" | "forex" | "commodity";
-
-const COMMODITY_YAHOO: Record<string, string> = {
-  GOLD: "GC=F",
-  SILVER: "SI=F",
-  OIL: "CL=F",
-  NATGAS: "NG=F",
-};
 
 const YAHOO_TF: Record<string, { interval: string; range: string }> = {
   "1m": { interval: "1m", range: "7d" },
@@ -37,6 +31,12 @@ interface YahooChartResponse {
   chart?: { result?: YahooChartResult[] | null };
 }
 
+/**
+ * Commodity tickers come from the shared COMMODITY_SPECS map, so a symbol the
+ * quote endpoint serves always has a chart too. An unknown commodity resolves
+ * to null rather than being passed through verbatim — sending "COPPER" to
+ * Yahoo just earns a 404 that would surface as a failed asset.
+ */
 export function toYahooTicker(type: KlineAssetType, symbol: string): string | null {
   if (type === "crypto") return null;
   if (type === "stock") return symbol;
@@ -44,7 +44,7 @@ export function toYahooTicker(type: KlineAssetType, symbol: string): string | nu
     const clean = symbol.replace("/", "").replace("=X", "").toUpperCase();
     return `${clean}=X`;
   }
-  if (type === "commodity") return COMMODITY_YAHOO[symbol.toUpperCase()] ?? symbol;
+  if (type === "commodity") return COMMODITY_SPECS[symbol.toUpperCase()]?.yahoo ?? null;
   return symbol;
 }
 
@@ -125,6 +125,69 @@ function parseYahooCandles(result: YahooChartResult, intervalMs: number): Kline[
   return klines;
 }
 
+/**
+ * Yahoo is the shared upstream for stocks, forex and commodities across the
+ * batch, SSE and chart endpoints, and it rate-limits aggressively. Every chart
+ * request in the process passes through this gate, so a heatmap refresh cannot
+ * open one connection per (symbol × timeframe).
+ */
+const YAHOO_MAX_CONCURRENT = 6;
+let active = 0;
+const waiting: Array<() => void> = [];
+
+async function acquire(): Promise<void> {
+  while (active >= YAHOO_MAX_CONCURRENT) {
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  }
+  active++;
+}
+
+function release(): void {
+  active--;
+  waiting.shift()?.();
+}
+
+/**
+ * In-flight deduplication by upstream URL. 1h and 4h resolve to the same Yahoo
+ * request (4h is resampled from hourly candles), so without this every refresh
+ * would fetch each symbol's hourly series twice.
+ */
+const inflight = new Map<string, Promise<YahooChartResult | null>>();
+
+async function fetchYahooChart(
+  ticker: string,
+  spec: { interval: string; range: string },
+): Promise<YahooChartResult | null> {
+  const key = `${ticker}|${spec.interval}|${spec.range}`;
+  const running = inflight.get(key);
+  if (running) return running;
+
+  const pending = (async () => {
+    await acquire();
+    try {
+      const url =
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+        `?interval=${spec.interval}&range=${spec.range}&includePrePost=false`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; MarketScanner/1.0)" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) {
+        throw new Error(`Yahoo klines ${ticker}/${spec.interval}: ${res.status}`);
+      }
+      const data = (await res.json()) as YahooChartResponse;
+      return data.chart?.result?.[0] ?? null;
+    } finally {
+      release();
+    }
+  })().finally(() => {
+    inflight.delete(key);
+  });
+
+  inflight.set(key, pending);
+  return pending;
+}
+
 export async function fetchYahooKlines(
   type: KlineAssetType,
   symbol: string,
@@ -135,20 +198,7 @@ export async function fetchYahooKlines(
   if (!ticker) return [];
 
   const spec = YAHOO_TF[interval] ?? YAHOO_TF["1h"];
-  const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
-    `?interval=${spec.interval}&range=${spec.range}&includePrePost=false`;
-
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; MarketScanner/1.0)" },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) {
-    throw new Error(`Yahoo klines ${ticker}/${interval}: ${res.status}`);
-  }
-
-  const data = (await res.json()) as YahooChartResponse;
-  const result = data.chart?.result?.[0];
+  const result = await fetchYahooChart(ticker, spec);
   if (!result) return [];
 
   // The 4h series is resampled from 1h source candles.

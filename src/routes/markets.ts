@@ -203,10 +203,11 @@ router.get("/forex", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/commodities", async (_req: Request, res: Response) => {
+router.get("/commodities", async (req: Request, res: Response) => {
   try {
     const svc = await getMarketDataService();
-    const data = await svc.getCommodities();
+    const symbols = parseSymbols(req.query.symbols as string | undefined);
+    const data = await svc.getCommodities(symbols);
     res.json({ data, source: data[0]?.source ?? "cache", count: data.length });
   } catch {
     res.status(200).json({ data: [], source: "none", count: 0 });

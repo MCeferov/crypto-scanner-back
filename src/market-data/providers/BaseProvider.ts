@@ -17,7 +17,7 @@ export abstract class BaseProvider implements MarketDataProvider {
     return [];
   }
 
-  async getCommodities(): Promise<NormalizedAsset[]> {
+  async getCommodities(symbols?: string[]): Promise<NormalizedAsset[]> {
     return [];
   }
 

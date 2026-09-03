@@ -33,3 +33,26 @@ export function classifyHttpError(status: number): import('../types.js').Provide
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/**
+ * Map with a bounded number of in-flight tasks, preserving input order.
+ * The default lists are large enough now (24 stocks, 22 forex pairs, 18
+ * commodities) that a plain Promise.all would open one upstream connection per
+ * symbol and invite a rate limit.
+ */
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await worker(items[i], i);
+    }
+  });
+  await Promise.all(runners);
+  return out;
+}
