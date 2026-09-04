@@ -5,10 +5,18 @@ node_modules
 dist
 *.tsbuildinfo
 
-# env — never commit real secrets; .env.example is the template
-.env
-.env.local
-.env.*.local
+# env — never commit real secrets; .env.example is the template.
+# Deny every .env* variant and re-allow only the template: the previous list
+# named .env and .env.*.local specifically, which left .env.production and
+# .env.development one `git add .` away from being committed.
+.env*
+!.env.example
+
+# local credential drops
+*.pem
+*.key
+*.p12
+secrets.json
 
 # prisma generated client
 /prisma/generated

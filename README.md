@@ -97,6 +97,39 @@ are used, so no cross-site cookie configuration is required.
 Migrations run in `preDeployCommand`, so a failed migration aborts the rollout
 instead of shipping a mismatched schema.
 
+## Security
+
+The API is public and unauthenticated for market data, so the controls are
+layered rather than gate-shaped:
+
+| Layer | Where | Notes |
+|---|---|---|
+| Security headers | `src/app.ts` (helmet) | `default-src 'none'`, `frame-ancestors 'none'`, nosniff, `no-referrer`, HSTS in production. CORP is `cross-origin` because the SPA is on another origin. |
+| CORS allowlist | `src/app.ts` | Exact origins from `FRONTEND_URL`, never `*` — the responses allow credentials. |
+| Rate limits | `src/middleware/rateLimit.ts` | Per-client budgets plus `globalMax` ceilings, all tunable by env. See `.env.example`. |
+| Account lockout | `src/middleware/bruteForce.ts` | Keyed on the login address, with exponential backoff. Unlike the IP limits it cannot be sidestepped by rewriting a header. |
+| Input validation | Zod, per route | Every body, query and path parameter. Symbols are matched against a strict character class before reaching an upstream URL. |
+| Upstream protection | `src/services/*`, `src/routes/binance.ts` | TTL caches, request de-duplication, a concurrency gate on Yahoo, an allowlist of proxied Binance paths and parameters. |
+
+### Verifying trust proxy
+
+`TRUST_PROXY` is the one setting that can quietly disable the IP-keyed limits.
+It must equal the number of proxies actually in front of the process. Too low
+and every visitor collapses into one bucket; too high and a caller can put any
+address it likes in `X-Forwarded-For` and be believed.
+
+To check a deployment, watch for `rate_limit_exceeded` in the logs and compare
+its `hops` field with `TRUST_PROXY`:
+
+- `hops` consistently **equal to** `TRUST_PROXY` → correct.
+- `hops` consistently **greater** → callers are appending their own
+  `X-Forwarded-For` entries and the per-client key is forgeable. The account
+  lockout and the `*_GLOBAL_MAX` ceilings still hold, but raise them in priority
+  and pin the value down.
+
+Until it is confirmed, keep the `*_GLOBAL_MAX` ceilings enabled — they are the
+controls that do not depend on the client's address being honest.
+
 ## Notes
 
 - Single replica by design: the kline cache, Binance proxy cache and rate-limit

@@ -13,3 +13,10 @@ allowBuilds:
   bcrypt: true
   esbuild: true
   prisma: true
+
+# SECURITY: express/body-parser accept qs ^6.14.0, and 6.15.3 carries two
+# advisories (array-limit bypass via bracket-key commas, and a DoS through an
+# attacker-controlled isBuffer). 6.16.0 is the patched line inside that range,
+# so this is a drop-in fix rather than a major bump.
+overrides:
+  qs: '^6.16.0'

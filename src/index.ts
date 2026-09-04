@@ -3,6 +3,7 @@ import "./env";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { prisma } from "./db/prisma";
+import { shutdownMarketDataService } from "./market-data";
 import { prewarmKlineCache } from "./services/klineBatchService.js";
 
 /**
@@ -34,6 +35,16 @@ const server = app.listen(port, () => {
   prewarmKlineCache();
 });
 
+/**
+ * Slowloris budget. Node defaults to 60s for headers and 300s for a full
+ * request, which is five minutes of a held socket per trickled byte stream.
+ * These bound how long an *inbound* request may take to arrive; SSE responses
+ * are unaffected, because the limit is on reading the request, not writing the
+ * reply.
+ */
+server.headersTimeout = 20_000;
+server.requestTimeout = 30_000;
+
 server.on("error", (err) => {
   logger.error({ err }, "Server failed to start");
   process.exit(1);
@@ -49,6 +60,12 @@ async function shutdown(signal: string) {
       await prisma.$disconnect();
     } catch {
       /* already disconnected */
+    }
+    try {
+      // Closes the Redis connection the market data cache may hold open.
+      await shutdownMarketDataService();
+    } catch {
+      /* never started, or already torn down */
     }
     process.exit(0);
   });

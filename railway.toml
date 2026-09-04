@@ -14,6 +14,9 @@
 #      Recommended:
 #        NODE_ENV=production
 #        BINANCE_API_BASE=https://data-api.binance.vision/api/v3
+#        TRUST_PROXY=1  security-relevant, see README "Verifying trust proxy"
+#      Rate limits and the account lockout have working defaults; every knob is
+#      listed in .env.example if they need tightening under real traffic.
 #      PORT is injected by Railway — do not set it.
 
 [build]

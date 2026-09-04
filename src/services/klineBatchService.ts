@@ -141,9 +141,16 @@ async function fetchBinanceKline(
 
   while (all.length < limit) {
     const batchSize = Math.min(maxPerReq, limit - all.length);
-    let url =
-      `${BINANCE_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${batchSize}`;
-    if (endTime != null) url += `&endTime=${endTime}`;
+    // Built through URLSearchParams rather than interpolated: symbol arrives
+    // from the request body, and an unescaped "&" in it would append arbitrary
+    // parameters to the upstream call we make on the caller's behalf.
+    const params = new URLSearchParams({
+      symbol,
+      interval,
+      limit: String(batchSize),
+    });
+    if (endTime != null) params.set("endTime", String(endTime));
+    const url = `${BINANCE_BASE}/klines?${params.toString()}`;
 
     const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) {

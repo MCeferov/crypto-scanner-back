@@ -20,9 +20,23 @@ import { formatZodError, signupSchema } from "../validators/auth";
 // nested run, so it has to be dropped before positional args line up.
 const [emailArg, passwordArg, usernameArg] = process.argv.slice(2).filter((arg) => arg !== "--");
 
+/**
+ * The password has no default on purpose. It used to fall back to a literal
+ * "admin12345" for "admin@test.com", which meant a single no-argument run
+ * against a production DATABASE_URL would mint a real account on publicly
+ * guessable credentials. Email and username keep their conveniences; the
+ * secret has to be stated.
+ */
+const password = passwordArg ?? process.env.SEED_PASSWORD;
+if (!password) {
+  console.error("FAIL: a password is required");
+  console.error('Usage: pnpm create-user -- <email> <password> [username]   (or set SEED_PASSWORD)');
+  process.exit(1);
+}
+
 const input = {
   email: emailArg ?? process.env.SEED_EMAIL ?? "admin@test.com",
-  password: passwordArg ?? process.env.SEED_PASSWORD ?? "admin12345",
+  password,
   username: usernameArg ?? process.env.SEED_USERNAME ?? "admin",
 };
 
@@ -73,7 +87,9 @@ async function main() {
 
   console.log(existing ? "UPDATED existing user (password reset)" : "CREATED new user");
   console.log({ id: user.id, username: user.username, email: user.email, createdAt: user.createdAt });
-  console.log(`\nLog in with:  email="${user.email}"  password="${parsed.data.password}"`);
+  // The password is not echoed back: the caller already has it, and this output
+  // ends up in shell history and CI logs.
+  console.log(`\nLog in with:  email="${user.email}"  and the password you supplied`);
 }
 
 main()
