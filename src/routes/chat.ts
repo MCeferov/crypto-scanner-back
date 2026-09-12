@@ -4,10 +4,11 @@ import { envInt, rateLimit } from "../middleware/rateLimit.js";
 import { logger } from "../lib/logger.js";
 import {
   createChatReply,
-  createChatStream,
   HISTORY_LIMIT,
   isChatConfigured,
+  streamChatDeltas,
 } from "../chat/service.js";
+import { providerStatus } from "../chat/providers.js";
 import { chatRequestSchema, normalizeLocale } from "../chat/types.js";
 
 const router: IRouter = Router();
@@ -50,7 +51,7 @@ function wantsJson(req: Request): boolean {
 }
 
 /**
- * POST /api/chat — proxy to Claude for the in-app help assistant.
+ * POST /api/chat — LLM proxy for the in-app help assistant.
  *
  * Authenticated because it spends money: an unauthenticated LLM proxy is a
  * bill waiting to be run up by anyone who finds the URL.
@@ -68,7 +69,7 @@ router.post("/", authMiddleware, chatLimiter, async (req: Request, res: Response
 
   if (!isChatConfigured()) {
     // A deployment without a key is a configuration gap, not a caller error.
-    logger.error({ event: "chat_not_configured" }, "ANTHROPIC_API_KEY is not set");
+    logger.error({ event: "chat_not_configured" }, "No LLM provider key is configured — see .env.example");
     res.status(503).json({ error: failureText(locale) });
     return;
   }
@@ -128,12 +129,9 @@ router.post("/", authMiddleware, chatLimiter, async (req: Request, res: Response
   };
 
   try {
-    const stream = createChatStream(params, abort.signal);
-    for await (const event of stream) {
+    for await (const delta of streamChatDeltas(params, abort.signal)) {
       if (clientGone) break;
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        send({ delta: event.delta.text });
-      }
+      send({ delta });
     }
     send({ done: true });
   } catch (err) {
@@ -146,6 +144,15 @@ router.post("/", authMiddleware, chatLimiter, async (req: Request, res: Response
   } finally {
     if (!res.writableEnded) res.end();
   }
+});
+
+/**
+ * Which LLM providers this deployment could use, and which one is live.
+ * Booleans and labels only — never a key. Authenticated, because the answer
+ * describes our own configuration.
+ */
+router.get("/providers", authMiddleware, chatLimiter, (_req: Request, res: Response) => {
+  res.json({ providers: providerStatus(), configured: isChatConfigured() });
 });
 
 export default router;

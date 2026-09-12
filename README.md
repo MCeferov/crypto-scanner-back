@@ -138,8 +138,8 @@ through this origin rather than added to the SPA's `img-src` allowlist.
 
 ## AI assistant
 
-`POST /api/chat` is the in-app help chat: a thin proxy to Claude that answers
-questions about how the app works. The key never leaves the server.
+`POST /api/chat` is the in-app help chat: a thin LLM proxy that answers
+questions about how the app works. Keys never leave the server.
 
 ```jsonc
 // request
@@ -150,14 +150,41 @@ questions about how the app works. The key never leaves the server.
 ```
 
 The reply streams as SSE by default — `data: {"delta":"..."}` per chunk, then
-`data: {"done":true}`. Send `Accept: application/json` or `"stream": false` to
-get `{ "reply": "..." }` in one piece instead. `context` is optional: `locale`
-(az/en/ru/tr) selects the answer language, `path` and `symbol` let the answer
-refer to what is on screen.
+`data: {"done":true}`. Send `Accept: application/json` or `"stream": false`
+to get `{ "reply": "..." }` in one piece instead. `context` is optional:
+`locale` (az/en/ru/tr) selects the answer language, `path` and `symbol` let
+the answer refer to what is on screen.
 
-**Auth is required.** This route spends money per call, so it sits behind
-`authMiddleware` and answers 401 without a valid Bearer token. The rate limit is
-keyed on the authenticated user id rather than the IP, which means rotating
+### Provider
+
+There is no provider lock-in. Every supported backend speaks the OpenAI
+`/chat/completions` shape, so one client covers all of them and switching is an
+environment variable — which matters when the reason you picked one was that it
+was free this quarter.
+
+| Provider | Key | Free tier |
+|---|---|---|
+| Google Gemini (default) | `GEMINI_API_KEY` | free, no card; best of these at az/ru/tr |
+| Groq | `GROQ_API_KEY` | free, very fast, ~30 req/min |
+| OpenRouter | `OPENROUTER_API_KEY` | free models, ~20 req/min and 50/day |
+| Mistral | `MISTRAL_API_KEY` | free experimental tier |
+| anything else | `CHAT_BASE_URL` | any OpenAI-compatible host, incl. a local Ollama |
+
+The first key present wins, in that order; `CHAT_PROVIDER` forces one and
+`CHAT_MODEL` overrides the model. `GET /api/chat/providers` reports which are
+configured — booleans only, never a key. With no key at all the endpoint answers
+503 and nothing else in the API is affected.
+
+One privacy note worth knowing: Gemini's free tier may use prompts to improve
+Google products. The panel only ever sends the question and the current route,
+never account data — but if that is not acceptable, Groq or a self-hosted model
+is the same one-variable switch.
+
+### Behaviour
+
+**Auth is required.** This route is metered, so it sits behind `authMiddleware`
+and answers 401 without a valid Bearer token. The rate limit is keyed on the
+authenticated user id rather than the IP, which means rotating
 `X-Forwarded-For` buys nothing — 15 messages per user per minute by default,
 with a global ceiling so one compromised account cannot run up the bill alone.
 
@@ -169,16 +196,14 @@ The system prompt lives in `src/chat/systemPrompt.ts` and describes the actual
 UI: the heatmap columns by their real labels, the signal latch rule, the detail
 panel, the chart's indicator library, and the rule that the assistant explains
 the system and general concepts but never gives financial advice or price
-predictions. It is split into a stable block and a per-request context block so
-the stable half can be cached — note that Haiku 4.5 only caches prefixes of 4096
-tokens or more, so that is a no-op on the default model and starts paying off if
-`CHAT_MODEL` points at a larger one.
+predictions. Stable knowledge comes first and per-request context last, so
+providers that cache implicitly can reuse the prefix.
 
 Errors never carry upstream detail: 401 unauthenticated, 400 malformed body, 429
-rate limited, 503 when `ANTHROPIC_API_KEY` is unset, 502 for an upstream
-failure. A failure mid-stream arrives as `data: {"error":"..."}` with wording
-written for the reader. Closing the connection aborts the upstream call, so an
-abandoned answer stops being billed.
+rate limited, 503 when no provider key is set, 502 for an upstream failure. A
+failure mid-stream arrives as `data: {"error":"..."}` with wording written for
+the reader. Closing the connection aborts the upstream call, so an abandoned
+answer stops being billed.
 
 ## Deployment (Railway)
 
