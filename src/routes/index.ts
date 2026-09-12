@@ -4,6 +4,7 @@ import authRouter from "./auth";
 import binanceRouter from "./binance";
 import marketsRouter from "./markets";
 import i18nRouter from "./i18n";
+import commentaryRouter from "./commentary";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use("/auth", authRouter);
 router.use("/binance", binanceRouter);
 router.use("/markets", marketsRouter);
 router.use("/i18n", i18nRouter);
+router.use("/commentary", commentaryRouter);
 
 export default router;

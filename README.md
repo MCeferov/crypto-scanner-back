@@ -81,9 +81,59 @@ pnpm build && pnpm start
 | GET | `/api/markets/health` | — |
 | GET | `/api/i18n/locales` | — |
 | GET | `/api/i18n/messages/:lang` | — |
+| GET | `/api/commentary?symbol=&name=&type=` | — |
+| GET | `/api/commentary/sources` | — |
 
 Authentication is a **Bearer token** in the `Authorization` header. No cookies
 are used, so no cross-site cookie configuration is required.
+
+## Commentary
+
+`GET /api/commentary?symbol=DOGE&name=Dogecoin&type=crypto` gathers recent
+commentary about one asset from whatever sources are configured and returns a
+single flat list, newest first:
+
+```json
+{ "items": [
+  { "id": "news-9f2c...", "author": "Jason Nelson", "source": "news",
+    "sourceLabel": "Decrypt", "title": "...", "text": "...",
+    "url": "https://decrypt.co/...", "publishedAt": "2026-09-11T16:16:05.000Z",
+    "sentiment": "bearish" }
+]}
+```
+
+Only `symbol` is required; `name` and `type` are context that sharpen matching.
+`source` is one of `x | news | youtube | reddit | blog | other`, and `sentiment`
+is omitted rather than guessed when the wording gives no signal.
+
+**Sources.** Two work with no credentials and are always on — publisher RSS
+feeds and Yahoo Finance's per-instrument headline feed, which between them cover
+crypto, equities, FX and futures. X, CryptoPanic, NewsAPI, YouTube and Reddit
+each switch themselves on when their key is set (see `.env.example`) and are
+skipped silently otherwise. `GET /api/commentary/sources` reports which are
+live. Adding a source means writing one class and adding a line to the registry
+in `src/commentary/service.ts`; nothing else knows which sources exist.
+
+**Guarantees the frontend can rely on.**
+
+- Every item has a real `url`, `author` and `text`. Items missing any of them are
+  dropped here rather than padded, and an asset with no coverage returns
+  `items: []` — nothing is ever invented.
+- Items are filtered for genuine relevance. Open feeds must name the asset in
+  the headline; Yahoo's per-instrument feed, which mixes in sector coverage, must
+  name it somewhere in the item.
+- `publishedAt` is ISO-8601 and the list is sorted newest first.
+- One source failing removes only its items. The endpoint answers 200 with
+  whatever the rest produced.
+- Answers are cached per asset (`COMMENTARY_TTL_SECONDS`, default 10 minutes)
+  and feeds are cached once for all assets, so a hundred detail pages do not mean
+  a hundred downloads of the same feed. Concurrent requests for one asset share a
+  single upstream sweep.
+- All credentials stay server-side; the SPA only ever calls this endpoint.
+
+No avatar is returned: the response shape has no field for one, and the frontend
+builds initials instead. If avatars are wanted later, they should be proxied
+through this origin rather than added to the SPA's `img-src` allowlist.
 
 ## Deployment (Railway)
 
