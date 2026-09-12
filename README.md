@@ -83,6 +83,7 @@ pnpm build && pnpm start
 | GET | `/api/i18n/messages/:lang` | — |
 | GET | `/api/commentary?symbol=&name=&type=` | — |
 | GET | `/api/commentary/sources` | — |
+| POST | `/api/chat` | **Bearer** |
 
 Authentication is a **Bearer token** in the `Authorization` header. No cookies
 are used, so no cross-site cookie configuration is required.
@@ -134,6 +135,50 @@ in `src/commentary/service.ts`; nothing else knows which sources exist.
 No avatar is returned: the response shape has no field for one, and the frontend
 builds initials instead. If avatars are wanted later, they should be proxied
 through this origin rather than added to the SPA's `img-src` allowlist.
+
+## AI assistant
+
+`POST /api/chat` is the in-app help chat: a thin proxy to Claude that answers
+questions about how the app works. The key never leaves the server.
+
+```jsonc
+// request
+{
+  "messages": [{ "role": "user", "content": "Skor sütunu nə deməkdir?" }],
+  "context": { "path": "/coin/DOGEUSDT", "symbol": "DOGE", "locale": "az" }
+}
+```
+
+The reply streams as SSE by default — `data: {"delta":"..."}` per chunk, then
+`data: {"done":true}`. Send `Accept: application/json` or `"stream": false` to
+get `{ "reply": "..." }` in one piece instead. `context` is optional: `locale`
+(az/en/ru/tr) selects the answer language, `path` and `symbol` let the answer
+refer to what is on screen.
+
+**Auth is required.** This route spends money per call, so it sits behind
+`authMiddleware` and answers 401 without a valid Bearer token. The rate limit is
+keyed on the authenticated user id rather than the IP, which means rotating
+`X-Forwarded-For` buys nothing — 15 messages per user per minute by default,
+with a global ceiling so one compromised account cannot run up the bill alone.
+
+Only the last `CHAT_HISTORY_LIMIT` turns (default 12) are sent upstream, and any
+leading assistant turns are dropped from that slice — the API rejects a
+conversation that does not start with a user message.
+
+The system prompt lives in `src/chat/systemPrompt.ts` and describes the actual
+UI: the heatmap columns by their real labels, the signal latch rule, the detail
+panel, the chart's indicator library, and the rule that the assistant explains
+the system and general concepts but never gives financial advice or price
+predictions. It is split into a stable block and a per-request context block so
+the stable half can be cached — note that Haiku 4.5 only caches prefixes of 4096
+tokens or more, so that is a no-op on the default model and starts paying off if
+`CHAT_MODEL` points at a larger one.
+
+Errors never carry upstream detail: 401 unauthenticated, 400 malformed body, 429
+rate limited, 503 when `ANTHROPIC_API_KEY` is unset, 502 for an upstream
+failure. A failure mid-stream arrives as `data: {"error":"..."}` with wording
+written for the reader. Closing the connection aborts the upstream call, so an
+abandoned answer stops being billed.
 
 ## Deployment (Railway)
 
