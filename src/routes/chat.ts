@@ -7,6 +7,7 @@ import {
   HISTORY_LIMIT,
   isChatConfigured,
   streamChatDeltas,
+  UpstreamError,
 } from "../chat/service.js";
 import { providerStatus } from "../chat/providers.js";
 import { chatRequestSchema, normalizeLocale } from "../chat/types.js";
@@ -39,8 +40,21 @@ const FAILURE_TEXT: Record<string, string> = {
   tr: "Asistan şu anda yanıt veremiyor. Lütfen biraz sonra tekrar deneyin.",
 };
 
-function failureText(locale: string | undefined): string {
-  return FAILURE_TEXT[locale ?? "en"] ?? FAILURE_TEXT.en;
+/**
+ * Free tiers throttle, and "try again in a moment" is actionable where
+ * "unavailable" only looks broken. Used once the retries and every configured
+ * provider have been exhausted.
+ */
+const BUSY_TEXT: Record<string, string> = {
+  az: "Köməkçi hazırda çox yüklüdür. Bir neçə saniyədən sonra yenidən yazın.",
+  en: "The assistant is busy right now. Try again in a few seconds.",
+  ru: "Помощник сейчас перегружен. Попробуйте через несколько секунд.",
+  tr: "Asistan şu anda yoğun. Birkaç saniye sonra tekrar deneyin.",
+};
+
+function failureText(locale: string | undefined, err?: unknown): string {
+  const table = err instanceof UpstreamError && err.status === 429 ? BUSY_TEXT : FAILURE_TEXT;
+  return table[locale ?? "en"] ?? table.en;
 }
 
 /** The client asked for a single JSON body rather than a stream. */
@@ -95,7 +109,8 @@ router.post("/", authMiddleware, chatLimiter, async (req: Request, res: Response
       res.json({ reply });
     } catch (err) {
       logger.error({ err, event: "chat_failed" }, "Chat completion failed");
-      res.status(502).json({ error: failureText(locale) });
+      const busy = err instanceof UpstreamError && err.status === 429;
+      res.status(busy ? 429 : 502).json({ error: failureText(locale, err) });
     }
     return;
   }
@@ -139,7 +154,7 @@ router.post("/", authMiddleware, chatLimiter, async (req: Request, res: Response
       // The abort we asked for — not a failure worth reporting.
     } else {
       logger.error({ err, event: "chat_stream_failed" }, "Chat stream failed");
-      send({ error: failureText(locale) });
+      send({ error: failureText(locale, err) });
     }
   } finally {
     if (!res.writableEnded) res.end();

@@ -1,5 +1,6 @@
 import { envInt } from "../middleware/rateLimit.js";
-import { resolveProvider, type ResolvedProvider } from "./providers.js";
+import { logger } from "../lib/logger.js";
+import { resolveProvider, resolveProviders, type ResolvedProvider } from "./providers.js";
 import { contextPrompt, stableSystemPrompt } from "./systemPrompt.js";
 import { trimHistory, type ChatContext, type ChatMessage } from "./types.js";
 
@@ -66,14 +67,24 @@ function headers(provider: ResolvedProvider): Record<string, string> {
 }
 
 /** Upstream failures carry provider detail, so they never reach the caller verbatim. */
-class UpstreamError extends Error {
+export class UpstreamError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
     this.name = "UpstreamError";
   }
+
+  /** True when waiting would plausibly help — quota, throttle, or a blip. */
+  get retryable(): boolean {
+    return this.status === 429 || this.status >= 500;
+  }
 }
 
-async function post(
+/** Free tiers throttle aggressively, so a single 429 must not become an error. */
+const MAX_ATTEMPTS = envInt("CHAT_MAX_ATTEMPTS", 3);
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function postOnce(
   provider: ResolvedProvider,
   body: CompletionsBody,
   signal: AbortSignal | undefined,
@@ -86,9 +97,54 @@ async function post(
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new UpstreamError(res.status, `${provider.id} HTTP ${res.status}: ${detail.slice(0, 300)}`);
+    const retryAfter = Number(res.headers.get("retry-after"));
+    const err = new UpstreamError(res.status, `${provider.id} HTTP ${res.status}: ${detail.slice(0, 300)}`);
+    if (Number.isFinite(retryAfter) && retryAfter > 0) {
+      (err as UpstreamError & { retryAfterMs?: number }).retryAfterMs = retryAfter * 1000;
+    }
+    throw err;
   }
   return res;
+}
+
+/**
+ * Try each configured provider in turn, retrying the retryable failures.
+ *
+ * This is the whole point of keeping several free tiers configured: they are
+ * rate limited precisely because they are free, and a 429 on one of them should
+ * cost the user a second of latency, not an error message. Fallback only
+ * happens before any bytes have been read, so a stream that has already started
+ * is never silently restarted on a different model.
+ */
+async function post(
+  body: (provider: ResolvedProvider) => CompletionsBody,
+  signal: AbortSignal | undefined,
+): Promise<{ res: Response; provider: ResolvedProvider }> {
+  const providers = resolveProviders();
+  if (providers.length === 0) throw new UpstreamError(503, "no provider configured");
+
+  let last: unknown;
+  for (const provider of providers) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return { res: await postOnce(provider, body(provider), signal), provider };
+      } catch (err) {
+        last = err;
+        if (signal?.aborted) throw err;
+        const retryable = err instanceof UpstreamError ? err.retryable : true;
+        if (!retryable || attempt === MAX_ATTEMPTS) break;
+        const hinted = (err as { retryAfterMs?: number }).retryAfterMs;
+        // Cap the server's hint: a provider asking for 60s is telling us to use
+        // the next provider, not to hold the request open for a minute.
+        await sleep(Math.min(hinted ?? 400 * 2 ** (attempt - 1), 2_000));
+      }
+    }
+    logger.warn(
+      { event: "chat_provider_failed", provider: provider.id, err: last },
+      "Chat provider failed, trying the next one",
+    );
+  }
+  throw last;
 }
 
 interface CompletionChoice {
@@ -112,10 +168,7 @@ export async function* streamChatDeltas(
   params: ChatParams,
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  const provider = resolveProvider();
-  if (!provider) return;
-
-  const res = await post(provider, buildBody(provider, params, true), signal);
+  const { res } = await post(provider => buildBody(provider, params, true), signal);
   if (!res.body) return;
 
   const reader = res.body.getReader();
@@ -156,10 +209,7 @@ export async function* streamChatDeltas(
 
 /** Non-streaming call, for clients that asked for a plain JSON reply. */
 export async function createChatReply(params: ChatParams): Promise<string> {
-  const provider = resolveProvider();
-  if (!provider) return "";
-
-  const res = await post(provider, buildBody(provider, params, false), undefined);
+  const { res } = await post(provider => buildBody(provider, params, false), undefined);
   const body = (await res.json()) as CompletionChunk;
   return (body.choices?.[0]?.message?.content ?? "").trim();
 }

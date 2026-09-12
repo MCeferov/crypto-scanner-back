@@ -80,17 +80,17 @@ export interface ResolvedProvider {
  * OpenAI-compatible host, or a local Ollama — so being unlisted never means
  * being unusable.
  */
-export function resolveProvider(): ResolvedProvider | null {
+export function resolveProviders(): ResolvedProvider[] {
   const custom = process.env.CHAT_BASE_URL?.trim();
   if (custom) {
-    return {
+    return [{
       id: "custom",
       label: "custom",
       baseUrl: custom.replace(/\/+$/, ""),
       model: process.env.CHAT_MODEL?.trim() || "gpt-4o-mini",
       // A local model needs no key; send a placeholder so the header is valid.
       apiKey: process.env.CHAT_API_KEY?.trim() || "not-required",
-    };
+    }];
   }
 
   const requested = process.env.CHAT_PROVIDER?.trim().toLowerCase();
@@ -98,19 +98,26 @@ export function resolveProvider(): ResolvedProvider | null {
     ? PROVIDERS.filter(p => p.id === requested)
     : PROVIDERS;
 
+  const resolved: ResolvedProvider[] = [];
   for (const preset of candidates) {
     const apiKey = process.env[preset.keyEnv]?.trim();
     if (!apiKey) continue;
-    return {
+    resolved.push({
       id: preset.id,
       label: preset.label,
       baseUrl: preset.baseUrl,
-      model: process.env.CHAT_MODEL?.trim() || preset.defaultModel,
+      // CHAT_MODEL belongs to the provider it was chosen for; applying it to a
+      // fallback would send a Gemini model id to Groq.
+      model: (resolved.length === 0 && process.env.CHAT_MODEL?.trim()) || preset.defaultModel,
       apiKey,
-    };
+    });
   }
+  return resolved;
+}
 
-  return null;
+/** The provider that will be tried first. */
+export function resolveProvider(): ResolvedProvider | null {
+  return resolveProviders()[0] ?? null;
 }
 
 /** For diagnostics: which providers this deployment could use. Never the keys. */
