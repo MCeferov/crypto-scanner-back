@@ -84,14 +84,80 @@ class SmtpMailer implements Mailer {
 
 const TRANSIENT_SMTP_CODES = new Set(["ESOCKET", "ECONNECTION", "ETIMEDOUT", "ECONNRESET", "EDNS"]);
 
+/** "Name <a@b.c>" or "a@b.c" -> { name?, email } */
+export function parseAddress(raw: string): { name?: string; email: string } {
+  const m = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(raw);
+  if (m) return { name: m[1] || undefined, email: m[2].trim() };
+  return { email: raw.trim() };
+}
+
+/**
+ * Brevo transactional API over HTTPS. Hosts such as Railway block outbound SMTP
+ * ports (25/465/587) on most plans, so SMTP times out there no matter how it is
+ * configured; port 443 is never blocked.
+ */
+export class BrevoApiMailer implements Mailer {
+  constructor(
+    private readonly apiKey: string,
+    private readonly from: string,
+    private readonly fetchImpl: typeof fetch = fetch,
+  ) {}
+
+  async send(message: MailMessage): Promise<void> {
+    const sender = parseAddress(this.from);
+    const body = JSON.stringify({
+      sender,
+      to: [{ email: message.to }],
+      subject: message.subject,
+      htmlContent: message.html,
+      textContent: message.text,
+    });
+
+    for (let attempt = 1; ; attempt++) {
+      let status: number | undefined;
+      let detail = "";
+      try {
+        const res = await this.fetchImpl("https://api.brevo.com/v3/smtp/email", {
+          method: "POST",
+          headers: { "api-key": this.apiKey, "content-type": "application/json", accept: "application/json" },
+          body,
+          signal: AbortSignal.timeout(10_000),
+        });
+        status = res.status;
+        const text = await res.text();
+        if (res.ok) {
+          logger.info({ event: "mail_sent", provider: "brevo-api", status }, "Verification email handed to Brevo");
+          return;
+        }
+        detail = text.slice(0, 300);
+      } catch (err) {
+        detail = err instanceof Error ? err.message : String(err);
+      }
+
+      logger.warn({ event: "mail_send_error", provider: "brevo-api", attempt, status, reason: detail }, "Brevo API send failed");
+      // 4xx (bad key, unverified sender, invalid address) will not improve on retry.
+      const transient = status === undefined || status >= 500 || status === 429;
+      if (!transient || attempt >= 2) {
+        throw new AppError(502, "Could not send the verification email. Try again.", "EMAIL_SEND_FAILED");
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+}
+
 class UnconfiguredMailer implements Mailer {
   async send(): Promise<void> {
-    logger.error({ event: "mail_not_configured" }, "SMTP_HOST is not set; cannot send verification email");
+    logger.error({ event: "mail_not_configured" }, "Neither BREVO_API_KEY nor SMTP_HOST is set; cannot send verification email");
     throw new AppError(503, "Email delivery is not configured", "EMAIL_NOT_CONFIGURED");
   }
 }
 
 export function createMailerFromEnv(env: NodeJS.ProcessEnv = process.env): Mailer {
+  // HTTPS API wins when configured: it is the only transport that works on
+  // hosts which block SMTP.
+  if (env.BREVO_API_KEY) {
+    return new BrevoApiMailer(env.BREVO_API_KEY, env.MAIL_FROM ?? env.SMTP_USER ?? "no-reply@localhost");
+  }
   const host = env.SMTP_HOST;
   if (host) {
     const port = Number(env.SMTP_PORT ?? 587);
