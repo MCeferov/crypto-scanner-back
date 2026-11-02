@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
 import { AppError } from "../lib/errors";
 import { logger } from "../lib/logger";
 
@@ -30,9 +31,16 @@ class SmtpMailer implements Mailer {
 
   constructor(
     private readonly from: string,
-    options: Parameters<typeof nodemailer.createTransport>[0],
+    options: SMTPTransport.Options,
   ) {
-    this.transport = nodemailer.createTransport(options);
+    // Without these a reset or silent connection stalls the signup request for
+    // nodemailer's two-minute defaults; fail fast so the client can retry.
+    this.transport = nodemailer.createTransport({
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
+      ...options,
+    });
   }
 
   async send(message: MailMessage): Promise<void> {
