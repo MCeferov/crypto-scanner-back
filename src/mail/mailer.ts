@@ -44,7 +44,7 @@ class SmtpMailer implements Mailer {
   }
 
   async send(message: MailMessage): Promise<void> {
-    const info = await this.transport.sendMail({ from: this.from, ...message });
+    const info = await this.sendWithRetry(message);
     // The server's reply is the only evidence of what happened to the message
     // once it leaves us, so keep it — "the code never arrived" is otherwise
     // undiagnosable. The recipient is deliberately not logged.
@@ -56,7 +56,33 @@ class SmtpMailer implements Mailer {
       throw new AppError(502, "Email address was rejected by the mail server", "EMAIL_REJECTED");
     }
   }
+
+  /**
+   * One retry on connection-level failures and 4xx (temporary) SMTP replies.
+   * Resets and timeouts happen before the server accepts the message, so a
+   * retry cannot deliver it twice. 5xx replies are permanent and not retried.
+   */
+  private async sendWithRetry(message: MailMessage) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.transport.sendMail({ from: this.from, ...message });
+      } catch (err) {
+        const e = err as { code?: string; responseCode?: number; message?: string };
+        const transient =
+          (e.code !== undefined && TRANSIENT_SMTP_CODES.has(e.code)) ||
+          (e.responseCode !== undefined && e.responseCode >= 400 && e.responseCode < 500);
+        logger.warn(
+          { event: "mail_send_error", attempt, code: e.code, responseCode: e.responseCode, reason: e.message },
+          "SMTP send failed",
+        );
+        if (!transient || attempt >= 2) throw err;
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+  }
 }
+
+const TRANSIENT_SMTP_CODES = new Set(["ESOCKET", "ECONNECTION", "ETIMEDOUT", "ECONNRESET", "EDNS"]);
 
 class UnconfiguredMailer implements Mailer {
   async send(): Promise<void> {
