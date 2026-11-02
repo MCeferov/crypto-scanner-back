@@ -72,8 +72,8 @@ async function main() {
   try {
     user = await prisma.user.upsert({
       where: { email },
-      update: { username, passwordHash },
-      create: { email, username, passwordHash },
+      update: { username, passwordHash, emailVerifiedAt: new Date() },
+      create: { email, username, passwordHash, emailVerifiedAt: new Date() }, // operator-created: trusted
     });
   } catch (err) {
     // P2002 = unique constraint. The email is handled by the upsert, so this

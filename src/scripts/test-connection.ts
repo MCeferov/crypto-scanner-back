@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(dir, "..", "..", "..");
+const repoRoot = path.resolve(dir, "..", "..");
 config({ path: path.join(repoRoot, ".env") });
 
 const prisma = new PrismaClient();

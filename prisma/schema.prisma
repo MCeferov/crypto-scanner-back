@@ -12,8 +12,24 @@ model User {
   username     String   @unique @db.VarChar(50)
   email        String   @unique @db.VarChar(255)
   passwordHash String   @map("password_hash") @db.VarChar(255)
+  /// Null until the owner proves control of the address with the emailed code.
+  emailVerifiedAt DateTime? @map("email_verified_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  verification EmailVerification?
+
   @@map("users")
+}
+
+/// One live signup code per user. Only a keyed hash is stored, never the code.
+model EmailVerification {
+  userId     String   @id @map("user_id")
+  codeHash   String   @map("code_hash") @db.VarChar(64)
+  expiresAt  DateTime @map("expires_at")
+  attempts   Int      @default(0)
+  lastSentAt DateTime @default(now()) @map("last_sent_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_verifications")
 }

@@ -68,6 +68,8 @@ pnpm build && pnpm start
 |---|---|---|
 | GET | `/api/healthz` | — |
 | POST | `/api/auth/signup` (alias `/sign-up`) | — |
+| POST | `/api/auth/verify-email` | — |
+| POST | `/api/auth/resend-verification` | — |
 | POST | `/api/auth/login` (alias `/sign-in`) | — |
 | POST | `/api/auth/logout` | Bearer |
 | GET | `/api/auth/me` | Bearer |

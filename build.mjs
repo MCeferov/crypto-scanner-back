@@ -17,6 +17,7 @@ const RUNTIME_EXTERNALS = [
   "cookie-parser",
   "bcrypt",
   "jsonwebtoken",
+  "nodemailer",
   "zod",
   "@prisma/client",
   "ioredis",

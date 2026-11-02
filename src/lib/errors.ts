@@ -5,16 +5,20 @@ export class AppError extends Error {
     public statusCode: number,
     message: string,
     public code?: string,
+    public retryAfterSec?: number,
   ) {
     super(message);
     this.name = "AppError";
   }
 }
 
-export function toErrorResponse(err: unknown): { status: number; body: { message: string; code?: string } } {
+export function toErrorResponse(err: unknown): { status: number; body: { message: string; code?: string; retryAfterSec?: number } } {
   if (err instanceof AppError) {
     // Deliberate, caller-facing errors carry their own safe wording.
-    return { status: err.statusCode, body: { message: err.message, code: err.code } };
+    return {
+      status: err.statusCode,
+      body: { message: err.message, code: err.code, ...(err.retryAfterSec ? { retryAfterSec: err.retryAfterSec } : {}) },
+    };
   }
 
   // Anything else is a bug or an upstream failure. The detail goes to the

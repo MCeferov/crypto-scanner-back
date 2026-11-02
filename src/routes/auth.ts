@@ -7,7 +7,7 @@ import { checkAccountLock, recordAuthFailure, recordAuthSuccess } from "../middl
 import { AppError, toErrorResponse } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { sanitizeEmail } from "../lib/sanitize";
-import { loginSchema, signupSchema } from "../validators/auth";
+import { loginSchema, resendVerificationSchema, signupSchema, verifyEmailSchema } from "../validators/auth";
 import * as authService from "../services/authService";
 
 const router: IRouter = Router();
@@ -37,6 +37,21 @@ const signupLimiter = rateLimit({
   keyPrefix: "auth:signup",
 });
 
+const verifyLimiter = rateLimit({
+  windowMs: envInt("VERIFY_RATE_WINDOW_SECONDS", 900) * 1000,
+  max: envInt("VERIFY_RATE_MAX", 10),
+  globalMax: envInt("VERIFY_RATE_GLOBAL_MAX", 600),
+  keyPrefix: "auth:verify",
+});
+
+/** Each call can send an email, so this is also an outbound-mail budget. */
+const resendLimiter = rateLimit({
+  windowMs: envInt("RESEND_RATE_WINDOW_SECONDS", 3600) * 1000,
+  max: envInt("RESEND_RATE_MAX", 6),
+  globalMax: envInt("RESEND_RATE_GLOBAL_MAX", 200),
+  keyPrefix: "auth:resend",
+});
+
 /**
  * Correlates repeated attempts against one account in the logs without writing
  * the address itself — an email is personal data and log stores are rarely
@@ -49,12 +64,43 @@ function accountTag(accountId: string): string {
 async function handleSignup(req: import("express").Request, res: import("express").Response) {
   try {
     const result = await authService.signup(req.body);
+    // No token: the account is unusable until the emailed code is confirmed.
     res.status(201).json({
-      message: "Account created successfully",
+      message: "Account created. Enter the verification code we emailed you.",
       user: result.user,
-      token: result.token,
+      ...result.verification,
     });
   } catch (err) {
+    const { status, body } = toErrorResponse(err);
+    res.status(status).json(body);
+  }
+}
+
+async function handleVerifyEmail(req: import("express").Request, res: import("express").Response) {
+  const accountId = sanitizeEmail(String(req.body?.email ?? ""));
+  try {
+    const result = await authService.verifyEmail(req.body);
+    res.json({ message: "Email verified", user: result.user, token: result.token });
+  } catch (err) {
+    if (err instanceof AppError && err.statusCode >= 400 && err.statusCode < 500) {
+      logger.warn(
+        { event: "auth_verify_failed", account: accountTag(accountId), code: err.code, ip: req.ip },
+        "Email verification failed",
+      );
+    }
+    const { status, body } = toErrorResponse(err);
+    res.status(status).json(body);
+  }
+}
+
+async function handleResend(req: import("express").Request, res: import("express").Response) {
+  try {
+    const notice = await authService.resendVerification(req.body);
+    res.json({ message: "If the account is awaiting verification, a new code was sent.", ...notice });
+  } catch (err) {
+    if (err instanceof AppError && err.code === "VERIFICATION_COOLDOWN") {
+      if (err.retryAfterSec) res.setHeader("Retry-After", String(err.retryAfterSec));
+    }
     const { status, body } = toErrorResponse(err);
     res.status(status).json(body);
   }
@@ -95,6 +141,9 @@ async function handleLogin(req: import("express").Request, res: import("express"
 
 router.post("/signup", signupLimiter, validateBody(signupSchema), handleSignup);
 router.post("/sign-up", signupLimiter, validateBody(signupSchema), handleSignup);
+
+router.post("/verify-email", verifyLimiter, validateBody(verifyEmailSchema), handleVerifyEmail);
+router.post("/resend-verification", resendLimiter, validateBody(resendVerificationSchema), handleResend);
 
 router.post("/login", loginLimiter, validateBody(loginSchema), handleLogin);
 router.post("/sign-in", loginLimiter, validateBody(loginSchema), handleLogin);
